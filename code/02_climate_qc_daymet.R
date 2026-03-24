@@ -829,5 +829,146 @@ fwrite(panel_clim, out_panel_clim)
 cat("\nSaved climate-merged panel to:\n", out_panel_clim, "\n")
 
 
+library(ggplot2)
+library(dplyr)
+library(mgcv)
+
+# restrict to warm season to reduce noise
+plot_dat <- panel_clim %>%
+  filter(month(event_date) %in% 5:9)
+
+# fit GAMs (quick exploratory)
+fit_deaths <- gam(deaths ~ s(tmax), data = plot_dat, family = quasipoisson)
+fit_ed     <- gam(ed_visits ~ s(tmax), data = plot_dat, family = quasipoisson)
+fit_ems    <- gam(ems_calls ~ s(tmax), data = plot_dat %>% filter(year >= 2020),
+                  family = quasipoisson)
+
+# prediction grid
+grid <- data.frame(tmax = seq(min(plot_dat$tmax, na.rm=TRUE),
+                              max(plot_dat$tmax, na.rm=TRUE), length.out = 200))
+
+grid$deaths <- predict(fit_deaths, newdata = grid, type = "response")
+grid$ed     <- predict(fit_ed,     newdata = grid, type = "response")
+grid$ems    <- predict(fit_ems,    newdata = grid, type = "response")
+
+plot1 <- ggplot(grid, aes(x = tmax)) +
+  geom_line(aes(y = deaths, color = "Mortality"), linewidth = 1.2) +
+  geom_line(aes(y = ed,     color = "ED"), linewidth = 1.2) +
+  geom_line(aes(y = ems,    color = "EMS"), linewidth = 1.2) +
+  labs(
+    title = "Smoothed Temperature–Health Relationships (Warm Season)",
+    x = "Daily Maximum Temperature (°C)",
+    y = "Predicted Daily Counts",
+    color = "Outcome"
+  ) +
+  theme_minimal()
+
+plot1
+
+plot_dat <- panel_clim %>%
+  filter(!is.na(tmax)) %>%   # <- important safeguard
+  mutate(
+    temp_bin = cut(
+      tmax,
+      breaks = seq(
+        floor(min(tmax, na.rm = TRUE)),
+        ceiling(max(tmax, na.rm = TRUE)),
+        by = 1
+      )
+    )
+  ) %>%
+  group_by(temp_bin) %>%
+  summarise(
+    tmax_mid = mean(tmax, na.rm = TRUE),
+    deaths = mean(deaths, na.rm = TRUE),
+    ed     = mean(ed_visits, na.rm = TRUE),
+    ems    = mean(ems_calls, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+plot2 <- ggplot(plot_dat, aes(x = tmax_mid)) +
+  geom_line(aes(y = deaths, color = "Mortality"), linewidth = 1.2) +
+  geom_point(aes(y = deaths, color = "Mortality"), size = 2) +
+  geom_line(aes(y = ed, color = "ED"), linewidth = 1.2) +
+  geom_point(aes(y = ed, color = "ED"), size = 2) +
+  geom_line(aes(y = ems, color = "EMS"), linewidth = 1.2) +
+  geom_point(aes(y = ems, color = "EMS"), size = 2) +
+  labs(
+    title = "Observed Counts by Temperature Bins",
+    x = "Temperature Bin Midpoint (°C)",
+    y = "Mean Daily Counts",
+    color = "Outcome"
+  ) +
+  theme_minimal()
+
+plot2
+
+# define extreme heat threshold (e.g., 95th percentile)
+threshold <- quantile(panel_clim$tmax, 0.95, na.rm = TRUE)
+
+plot_dat <- panel_clim %>%
+  mutate(
+    heat_group = case_when(
+      tmax >= threshold ~ "Extreme Heat",
+      TRUE ~ "Non-Extreme"
+    )
+  ) %>%
+  group_by(heat_group) %>%
+  summarise(
+    deaths = mean(deaths, na.rm = TRUE),
+    ed     = mean(ed_visits, na.rm = TRUE),
+    ems    = mean(ems_calls, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  pivot_longer(-heat_group, names_to = "outcome", values_to = "mean_count")
+
+plot3 <- ggplot(plot_dat, aes(x = heat_group, y = mean_count, fill = outcome)) +
+  geom_col(position = "dodge") +
+  labs(
+    title = "Average Daily Counts: Extreme Heat vs Non-Extreme Days",
+    x = "",
+    y = "Mean Daily Count",
+    fill = "Outcome"
+  ) +
+  theme_minimal()
+
+plot3
+
+ggsave(
+  filename = "figures/temperature_response_gam.png",
+  plot = plot1,
+  width = 8,
+  height = 6,
+  dpi = 300
+)
+
+
+ggsave(
+  filename = "figures/temperature_binned_means.png",
+  plot = plot2,
+  width = 8,
+  height = 6,
+  dpi = 300
+)
+
+ggsave(
+  filename = "figures/extreme_heat_comparison.png",
+  plot = plot3,
+  width = 8,
+  height = 6,
+  dpi = 300
+)
+
+
+
+
+
+
+
+
+
+
+
+
 
 

@@ -333,3 +333,104 @@ fwrite(ed,       "data/derived/ed_standardized.csv")
 fwrite(ems_final,"data/derived/ems_standardized.csv")
 
 cat("\nSaved standardized files to data/derived/\n")
+
+clean_comm <- function(x) {
+  x %>%
+    stringr::str_to_title() %>%
+    stringr::str_squish()
+}
+
+deaths   <- deaths   %>% mutate(community = clean_comm(community))
+ed       <- ed       %>% mutate(community = clean_comm(community))
+ems_final<- ems_final%>% mutate(community = clean_comm(community))
+
+setdiff(unique(deaths$community), unique(ed$community))
+setdiff(unique(ed$community), unique(deaths$community))
+
+standardize_community <- function(x) {
+  x <- as.character(x)
+  
+  x <- stringr::str_squish(x)
+  x <- stringr::str_to_title(x)
+  
+  # Explicit fixes
+  x <- dplyr::case_when(
+    x %in% c("Lakeview") ~ "Lake View",
+    x %in% c("Ohare", "O'hare", "O Hare") ~ "O'Hare",
+    TRUE ~ x
+  )
+  
+  x
+}
+
+deaths   <- deaths   %>% mutate(community = standardize_community(community))
+ed       <- ed       %>% mutate(community = standardize_community(community))
+ems_final<- ems_final%>% mutate(community = standardize_community(community))
+
+setdiff(unique(deaths$community), unique(ed$community))
+setdiff(unique(ed$community), unique(deaths$community))
+
+deaths <- deaths %>% filter(!is.na(community))
+
+length(unique(deaths$community))
+length(unique(ed$community))
+length(unique(ems_final$community))
+
+deaths_use <- deaths %>%
+  filter(!is.na(event_date), !is.na(community))
+
+ed_use <- ed %>%
+  filter(!is.na(event_date), !is.na(community))
+
+ems_use <- ems_final %>%
+  filter(!is.na(event_date), !is.na(community)) %>%
+  filter(year(event_date) >= 2018)  # adjust after your coverage check
+
+deaths_daily <- deaths_use %>%
+  count(community, event_date, name = "deaths")
+
+ed_daily <- ed_use %>%
+  count(community, event_date, name = "ed_visits")
+
+ems_daily <- ems_use %>%
+  count(community, event_date, name = "ems_calls")
+
+library(tidyr)
+
+all_dates <- seq(
+  min(c(deaths_daily$event_date, ed_daily$event_date, ems_daily$event_date), na.rm = TRUE),
+  max(c(deaths_daily$event_date, ed_daily$event_date, ems_daily$event_date), na.rm = TRUE),
+  by = "day"
+)
+
+all_comms <- sort(unique(ed$community))  # use ED as reference (complete)
+
+panel <- expand_grid(
+  community = all_comms,
+  event_date = all_dates
+)
+
+panel <- panel %>%
+  left_join(deaths_daily, by = c("community", "event_date")) %>%
+  left_join(ed_daily,     by = c("community", "event_date")) %>%
+  left_join(ems_daily,    by = c("community", "event_date"))
+
+panel <- panel %>%
+  mutate(
+    deaths    = coalesce(deaths, 0),
+    ed_visits = coalesce(ed_visits, 0),
+    ems_calls = coalesce(ems_calls, 0)
+  )
+
+library(lubridate)
+
+panel <- panel %>%
+  mutate(
+    year = year(event_date),
+    month = month(event_date),
+    doy = yday(event_date),
+    dow = wday(event_date),
+    weekend = dow %in% c("7", "1")
+  )
+
+fwrite(panel, "data/derived/community_day_panel.csv")

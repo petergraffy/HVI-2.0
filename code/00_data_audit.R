@@ -120,7 +120,7 @@ check_date <- function(df, col) {
 # Example placeholders (update after inspection)
 check_date(deaths, "dod")
 check_date(ed, "enc_admit_date")
-check_date(ems, "patient_assessment_date_time_eexam_03")
+#check_date(ems, "patient_assessment_date_time_eexam_03")
 
 # -------------------------------------------------------------------------------------
 # Output quick summary tables

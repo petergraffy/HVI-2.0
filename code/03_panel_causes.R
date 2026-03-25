@@ -316,3 +316,154 @@ print(dim(panel_causes))
 
 fwrite(panel_causes, out_panel)
 cat("\nSaved to:\n", out_panel, "\n")
+
+
+library(ggplot2)
+library(dplyr)
+
+plot_dat <- panel_causes %>%
+  filter(year(event_date) >= 2010)
+
+plot_dist_all <- plot_dat %>%
+  select(deaths, ed_visits, ems_calls) %>%
+  pivot_longer(everything(), names_to = "outcome", values_to = "count")
+
+ggplot(plot_dist_all, aes(x = count)) +
+  geom_histogram(bins = 50, fill = "steelblue", alpha = 0.7) +
+  facet_wrap(~ outcome, scales = "free") +
+  labs(
+    title = "Distribution of Daily Counts by Outcome",
+    x = "Daily Count",
+    y = "Frequency"
+  ) +
+  theme_minimal()
+
+cause_vars <- c(
+  "death_cvd", "death_respiratory",
+  "ed_cvd", "ed_respiratory",
+  "ems_respiratory", "ems_syncope", "ems_neuro"
+)
+
+plot_dat <- panel_causes %>%
+  select(all_of(cause_vars)) %>%
+  pivot_longer(everything(), names_to = "cause", values_to = "count")
+
+ggplot(plot_dat, aes(x = count)) +
+  geom_histogram(bins = 40, fill = "darkred", alpha = 0.7) +
+  facet_wrap(~ cause, scales = "free") +
+  theme_minimal() +
+  labs(title = "Distribution of Cause-Specific Daily Counts")
+
+ggplot(panel_causes, aes(x = event_date)) +
+  geom_line(aes(y = deaths, color = "Mortality"), alpha = 0.7) +
+  geom_line(aes(y = ed_visits, color = "ED"), alpha = 0.7) +
+  geom_line(aes(y = ems_calls, color = "EMS"), alpha = 0.7) +
+  facet_wrap(~ year(event_date), scales = "free_x") +
+  theme_minimal() +
+  labs(title = "Daily Time Series by Outcome")
+
+map_dat <- panel_causes %>%
+  filter(year(event_date) >= 2015) %>%
+  group_by(community) %>%
+  summarise(
+    deaths = mean(deaths, na.rm = TRUE),
+    ed     = mean(ed_visits, na.rm = TRUE),
+    ems    = mean(ems_calls, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+ca <- comm_areas %>% select(community)
+
+ca_map <- ca %>%
+  mutate(community = str_to_title(community)) %>%
+  left_join(map_dat, by = "community")
+
+library(ggplot2)
+
+map_deaths <- ggplot(ca_map) +
+  geom_sf(aes(fill = deaths), color = NA) +
+  scale_fill_viridis_c(option = "plasma") +
+  theme_void() +
+  labs(title = "Average Daily Mortality")
+
+map_ed <- ggplot(ca_map) +
+  geom_sf(aes(fill = ed), color = NA) +
+  scale_fill_viridis_c(option = "plasma") +
+  theme_void() +
+  labs(title = "Average Daily ED Visits")
+
+map_ems <- ggplot(ca_map) +
+  geom_sf(aes(fill = ems), color = NA) +
+  scale_fill_viridis_c(option = "plasma") +
+  theme_void() +
+  labs(title = "Average Daily EMS Calls")
+
+library(patchwork)
+
+map_deaths | map_ed | map_ems
+
+map_dat <- panel_causes %>%
+  filter(year(event_date) >= 2015) %>%
+  group_by(community) %>%
+  summarise(
+    death_cvd = mean(death_cvd, na.rm = TRUE),
+    ed_cvd    = mean(ed_cvd, na.rm = TRUE),
+    ems_cvd   = mean(ems_cvd, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+ca_map <- ca %>%
+  left_join(map_dat, by = "community")
+
+ggplot(ca_map) +
+  geom_sf(aes(fill = death_cvd), color = NA) +
+  scale_fill_viridis_c() +
+  theme_void() +
+  labs(title = "CVD Mortality (Mean Daily)")
+
+map_dat <- panel_causes %>%
+  filter(year(event_date) >= 2015) %>%
+  group_by(community) %>%
+  summarise(
+    z_deaths = scale(mean(deaths)),
+    z_ed     = scale(mean(ed_visits)),
+    z_ems    = scale(mean(ems_calls)),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    composite = z_deaths + z_ed + z_ems
+  )
+
+ca_map <- ca %>%
+  left_join(map_dat, by = "community")
+
+ggplot(ca_map) +
+  geom_sf(aes(fill = composite), color = NA) +
+  scale_fill_viridis_c() +
+  theme_void() +
+  labs(title = "Composite Health Burden (Prototype HVI)")
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

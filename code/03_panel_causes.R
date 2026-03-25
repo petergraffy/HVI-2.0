@@ -317,93 +317,270 @@ print(dim(panel_causes))
 fwrite(panel_causes, out_panel)
 cat("\nSaved to:\n", out_panel, "\n")
 
+# =====================================================================================
+# HVI 2.0 | Exploratory plots and maps for all-cause + cause-specific outcomes
+# =====================================================================================
 
-library(ggplot2)
-library(dplyr)
+suppressPackageStartupMessages({
+  library(dplyr)
+  library(tidyr)
+  library(ggplot2)
+  library(lubridate)
+  library(stringr)
+  library(sf)
+  library(janitor)
+  library(patchwork)
+  library(scales)
+})
 
-plot_dat <- panel_causes %>%
-  filter(year(event_date) >= 2010)
+# -------------------------------------------------------------------------------------
+# Output directory
+# -------------------------------------------------------------------------------------
 
-plot_dist_all <- plot_dat %>%
-  select(deaths, ed_visits, ems_calls) %>%
-  pivot_longer(everything(), names_to = "outcome", values_to = "count")
+fig_dir <- "figures"
+dir.create(fig_dir, showWarnings = FALSE, recursive = TRUE)
 
-ggplot(plot_dist_all, aes(x = count)) +
-  geom_histogram(bins = 50, fill = "steelblue", alpha = 0.7) +
+# -------------------------------------------------------------------------------------
+# Helpers
+# -------------------------------------------------------------------------------------
+
+standardize_community <- function(x) {
+  x <- as.character(x)
+  x <- str_squish(x)
+  x <- str_to_title(x)
+  
+  x <- case_when(
+    x %in% c("Lakeview") ~ "Lake View",
+    x %in% c("Ohare", "O'hare", "O Hare") ~ "O'Hare",
+    TRUE ~ x
+  )
+  
+  x
+}
+
+save_plot <- function(plot_obj, filename, width = 9, height = 6, dpi = 300) {
+  ggsave(
+    filename = file.path(fig_dir, filename),
+    plot = plot_obj,
+    width = width,
+    height = height,
+    dpi = dpi
+  )
+}
+
+base_theme <- theme_minimal(base_size = 12) +
+  theme(
+    legend.position = "right",
+    plot.title = element_text(face = "bold"),
+    strip.text = element_text(face = "bold")
+  )
+
+theme_set(base_theme)
+
+# -------------------------------------------------------------------------------------
+# Standardize panel and define endpoint availability windows
+# -------------------------------------------------------------------------------------
+
+panel_causes <- panel_causes %>%
+  mutate(
+    community = standardize_community(community),
+    event_date = as.Date(event_date),
+    year = year(event_date),
+    has_deaths = year >= 1993,
+    has_ed     = year >= 2011,
+    has_ems    = year >= 2019
+  )
+
+# Standardize community areas object
+ca <- comm_areas %>%
+  clean_names()
+
+if (!"community" %in% names(ca)) {
+  nm <- intersect(c("community", "ca_name", "commarea", "community_area"), names(ca))[1]
+  if (is.na(nm)) stop("Could not find community field in comm_areas.")
+  ca <- ca %>% mutate(community = .data[[nm]])
+}
+
+ca <- ca %>%
+  mutate(community = standardize_community(community))
+
+# -------------------------------------------------------------------------------------
+# 1) Distribution of all-cause daily counts
+# Use endpoint-specific observation windows to avoid structural zeros
+# -------------------------------------------------------------------------------------
+
+plot_dist_all_dat <- bind_rows(
+  panel_causes %>%
+    filter(has_deaths) %>%
+    transmute(outcome = "Mortality", count = deaths),
+  
+  panel_causes %>%
+    filter(has_ed) %>%
+    transmute(outcome = "ED Visits", count = ed_visits),
+  
+  panel_causes %>%
+    filter(has_ems) %>%
+    transmute(outcome = "EMS Calls", count = ems_calls)
+)
+
+plot_dist_all <- ggplot(plot_dist_all_dat, aes(x = count)) +
+  geom_histogram(bins = 50, fill = "steelblue", alpha = 0.8) +
   facet_wrap(~ outcome, scales = "free") +
   labs(
     title = "Distribution of Daily Counts by Outcome",
     x = "Daily Count",
     y = "Frequency"
-  ) +
-  theme_minimal()
+  )
 
-cause_vars <- c(
-  "death_cvd", "death_respiratory",
-  "ed_cvd", "ed_respiratory",
-  "ems_respiratory", "ems_syncope", "ems_neuro"
+save_plot(plot_dist_all, "distribution_all_cause_daily_counts.png", width = 10, height = 6)
+save_plot(plot_dist_all, "distribution_all_cause_daily_counts.pdf", width = 10, height = 6)
+
+# -------------------------------------------------------------------------------------
+# 2) Distribution of selected cause-specific daily counts
+# Again use endpoint-specific windows
+# -------------------------------------------------------------------------------------
+
+cause_dist_dat <- bind_rows(
+  panel_causes %>%
+    filter(has_deaths) %>%
+    transmute(
+      death_cvd,
+      death_respiratory
+    ) %>%
+    pivot_longer(everything(), names_to = "cause", values_to = "count"),
+  
+  panel_causes %>%
+    filter(has_ed) %>%
+    transmute(
+      ed_cvd,
+      ed_respiratory
+    ) %>%
+    pivot_longer(everything(), names_to = "cause", values_to = "count"),
+  
+  panel_causes %>%
+    filter(has_ems) %>%
+    transmute(
+      ems_respiratory,
+      ems_syncope,
+      ems_neuro
+    ) %>%
+    pivot_longer(everything(), names_to = "cause", values_to = "count")
 )
 
-plot_dat <- panel_causes %>%
-  select(all_of(cause_vars)) %>%
-  pivot_longer(everything(), names_to = "cause", values_to = "count")
-
-ggplot(plot_dat, aes(x = count)) +
-  geom_histogram(bins = 40, fill = "darkred", alpha = 0.7) +
+plot_dist_cause <- ggplot(cause_dist_dat, aes(x = count)) +
+  geom_histogram(bins = 40, fill = "darkred", alpha = 0.8) +
   facet_wrap(~ cause, scales = "free") +
-  theme_minimal() +
-  labs(title = "Distribution of Cause-Specific Daily Counts")
+  labs(
+    title = "Distribution of Cause-Specific Daily Counts",
+    x = "Daily Count",
+    y = "Frequency"
+  )
 
-ggplot(panel_causes, aes(x = event_date)) +
-  geom_line(aes(y = deaths, color = "Mortality"), alpha = 0.7) +
-  geom_line(aes(y = ed_visits, color = "ED"), alpha = 0.7) +
-  geom_line(aes(y = ems_calls, color = "EMS"), alpha = 0.7) +
-  facet_wrap(~ year(event_date), scales = "free_x") +
-  theme_minimal() +
-  labs(title = "Daily Time Series by Outcome")
+save_plot(plot_dist_cause, "distribution_cause_specific_daily_counts.png", width = 12, height = 8)
+save_plot(plot_dist_cause, "distribution_cause_specific_daily_counts.pdf", width = 12, height = 8)
 
-map_dat <- panel_causes %>%
-  filter(year(event_date) >= 2015) %>%
+# -------------------------------------------------------------------------------------
+# 3) Time series by outcome
+# Use daily totals across community areas and restrict each outcome to its true window
+# -------------------------------------------------------------------------------------
+
+ts_deaths <- panel_causes %>%
+  filter(has_deaths) %>%
+  group_by(event_date) %>%
+  summarise(count = sum(deaths, na.rm = TRUE), outcome = "Mortality", .groups = "drop")
+
+ts_ed <- panel_causes %>%
+  filter(has_ed) %>%
+  group_by(event_date) %>%
+  summarise(count = sum(ed_visits, na.rm = TRUE), outcome = "ED Visits", .groups = "drop")
+
+ts_ems <- panel_causes %>%
+  filter(has_ems) %>%
+  group_by(event_date) %>%
+  summarise(count = sum(ems_calls, na.rm = TRUE), outcome = "EMS Calls", .groups = "drop")
+
+plot_ts_dat <- bind_rows(ts_deaths, ts_ed, ts_ems) %>%
+  mutate(plot_year = year(event_date))
+
+plot_time_series <- ggplot(plot_ts_dat, aes(x = event_date, y = count, color = outcome)) +
+  geom_line(alpha = 0.7, linewidth = 0.35) +
+  facet_wrap(~ plot_year, scales = "free_x") +
+  labs(
+    title = "Daily Time Series by Outcome",
+    x = "Date",
+    y = "Total Daily Count",
+    color = NULL
+  ) +
+  theme(
+    axis.text.x = element_text(size = 7)
+  )
+
+save_plot(plot_time_series, "daily_time_series_by_outcome.png", width = 16, height = 10)
+save_plot(plot_time_series, "daily_time_series_by_outcome.pdf", width = 16, height = 10)
+
+# -------------------------------------------------------------------------------------
+# 4) All-cause maps for all three endpoints
+# For direct comparison, use the common overlap window: 2019+
+# -------------------------------------------------------------------------------------
+
+map_dat_allcause <- panel_causes %>%
+  filter(year >= 2019) %>%
   group_by(community) %>%
   summarise(
     deaths = mean(deaths, na.rm = TRUE),
-    ed     = mean(ed_visits, na.rm = TRUE),
-    ems    = mean(ems_calls, na.rm = TRUE),
+    ed = mean(ed_visits, na.rm = TRUE),
+    ems = mean(ems_calls, na.rm = TRUE),
     .groups = "drop"
   )
 
-ca <- comm_areas %>% select(community)
+ca_map_allcause <- ca %>%
+  left_join(map_dat_allcause, by = "community")
 
-ca_map <- ca %>%
-  mutate(community = str_to_title(community)) %>%
-  left_join(map_dat, by = "community")
-
-library(ggplot2)
-
-map_deaths <- ggplot(ca_map) +
+map_deaths <- ggplot(ca_map_allcause) +
   geom_sf(aes(fill = deaths), color = NA) +
-  scale_fill_viridis_c(option = "plasma") +
+  scale_fill_viridis_c(option = "plasma", labels = label_number()) +
   theme_void() +
-  labs(title = "Average Daily Mortality")
+  labs(
+    title = "Average Daily Mortality",
+    subtitle = "2019–2025 overlap window",
+    fill = "Count"
+  )
 
-map_ed <- ggplot(ca_map) +
+map_ed <- ggplot(ca_map_allcause) +
   geom_sf(aes(fill = ed), color = NA) +
-  scale_fill_viridis_c(option = "plasma") +
+  scale_fill_viridis_c(option = "plasma", labels = label_number()) +
   theme_void() +
-  labs(title = "Average Daily ED Visits")
+  labs(
+    title = "Average Daily ED Visits",
+    subtitle = "2019–2025 overlap window",
+    fill = "Count"
+  )
 
-map_ems <- ggplot(ca_map) +
+map_ems <- ggplot(ca_map_allcause) +
   geom_sf(aes(fill = ems), color = NA) +
-  scale_fill_viridis_c(option = "plasma") +
+  scale_fill_viridis_c(option = "plasma", labels = label_number()) +
   theme_void() +
-  labs(title = "Average Daily EMS Calls")
+  labs(
+    title = "Average Daily EMS Calls",
+    subtitle = "2019–2025 overlap window",
+    fill = "Count"
+  )
 
-library(patchwork)
+map_allcause_combo <- map_deaths | map_ed | map_ems
 
-map_deaths | map_ed | map_ems
+save_plot(map_deaths, "map_allcause_mortality.png", width = 7, height = 7)
+save_plot(map_ed, "map_allcause_ed.png", width = 7, height = 7)
+save_plot(map_ems, "map_allcause_ems.png", width = 7, height = 7)
+save_plot(map_allcause_combo, "map_allcause_three_panel.png", width = 16, height = 6)
+save_plot(map_allcause_combo, "map_allcause_three_panel.pdf", width = 16, height = 6)
 
-map_dat <- panel_causes %>%
-  filter(year(event_date) >= 2015) %>%
+# -------------------------------------------------------------------------------------
+# 5) Cause-specific map example: CVD
+# Use common overlap window for cross-endpoint comparability
+# -------------------------------------------------------------------------------------
+
+map_dat_cvd <- panel_causes %>%
+  filter(year >= 2019) %>%
   group_by(community) %>%
   summarise(
     death_cvd = mean(death_cvd, na.rm = TRUE),
@@ -412,56 +589,260 @@ map_dat <- panel_causes %>%
     .groups = "drop"
   )
 
-ca_map <- ca %>%
-  left_join(map_dat, by = "community")
+ca_map_cvd <- ca %>%
+  left_join(map_dat_cvd, by = "community")
 
-ggplot(ca_map) +
+map_death_cvd <- ggplot(ca_map_cvd) +
   geom_sf(aes(fill = death_cvd), color = NA) +
-  scale_fill_viridis_c() +
+  scale_fill_viridis_c(labels = label_number()) +
   theme_void() +
-  labs(title = "CVD Mortality (Mean Daily)")
+  labs(
+    title = "CVD Mortality",
+    subtitle = "Mean daily count, 2019–2025",
+    fill = "Count"
+  )
 
-map_dat <- panel_causes %>%
-  filter(year(event_date) >= 2015) %>%
+map_ed_cvd <- ggplot(ca_map_cvd) +
+  geom_sf(aes(fill = ed_cvd), color = NA) +
+  scale_fill_viridis_c(labels = label_number()) +
+  theme_void() +
+  labs(
+    title = "CVD ED Visits",
+    subtitle = "Mean daily count, 2019–2025",
+    fill = "Count"
+  )
+
+map_ems_cvd <- ggplot(ca_map_cvd) +
+  geom_sf(aes(fill = ems_cvd), color = NA) +
+  scale_fill_viridis_c(labels = label_number()) +
+  theme_void() +
+  labs(
+    title = "CVD EMS Calls",
+    subtitle = "Mean daily count, 2019–2025",
+    fill = "Count"
+  )
+
+map_cvd_combo <- map_death_cvd | map_ed_cvd | map_ems_cvd
+
+save_plot(map_death_cvd, "map_cvd_mortality.png", width = 7, height = 7)
+save_plot(map_ed_cvd, "map_cvd_ed.png", width = 7, height = 7)
+save_plot(map_ems_cvd, "map_cvd_ems.png", width = 7, height = 7)
+save_plot(map_cvd_combo, "map_cvd_three_panel.png", width = 16, height = 6)
+save_plot(map_cvd_combo, "map_cvd_three_panel.pdf", width = 16, height = 6)
+
+# -------------------------------------------------------------------------------------
+# 6) Composite health burden map
+# Must use common overlap window
+# -------------------------------------------------------------------------------------
+
+map_dat_composite <- panel_causes %>%
+  filter(year >= 2019) %>%
   group_by(community) %>%
   summarise(
-    z_deaths = scale(mean(deaths)),
-    z_ed     = scale(mean(ed_visits)),
-    z_ems    = scale(mean(ems_calls)),
+    deaths = mean(deaths, na.rm = TRUE),
+    ed = mean(ed_visits, na.rm = TRUE),
+    ems = mean(ems_calls, na.rm = TRUE),
     .groups = "drop"
   ) %>%
   mutate(
+    z_deaths = as.numeric(scale(deaths)),
+    z_ed     = as.numeric(scale(ed)),
+    z_ems    = as.numeric(scale(ems)),
     composite = z_deaths + z_ed + z_ems
   )
 
-ca_map <- ca %>%
-  left_join(map_dat, by = "community")
+ca_map_composite <- ca %>%
+  left_join(map_dat_composite, by = "community")
 
-ggplot(ca_map) +
+map_composite <- ggplot(ca_map_composite) +
   geom_sf(aes(fill = composite), color = NA) +
-  scale_fill_viridis_c() +
+  scale_fill_viridis_c(labels = label_number(accuracy = 0.1)) +
   theme_void() +
-  labs(title = "Composite Health Burden (Prototype HVI)")
+  labs(
+    title = "Composite Health Burden (Prototype HVI)",
+    subtitle = "Sum of z-scored daily mean mortality, ED, and EMS counts (2019–2025)",
+    fill = "Composite"
+  )
 
+save_plot(map_composite, "map_composite_health_burden.png", width = 8, height = 7)
+save_plot(map_composite, "map_composite_health_burden.pdf", width = 8, height = 7)
 
+# -------------------------------------------------------------------------------------
+# Optional QA prints
+# -------------------------------------------------------------------------------------
 
+cat("\nSaved figures to:", fig_dir, "\n")
 
+cat("\nComposite map summary:\n")
+print(summary(map_dat_composite))
 
+cat("\nAll-cause map summary:\n")
+print(summary(map_dat_allcause))
 
+# =====================================================================================
+# Warm-season citywide time series, shared overlap window only, with secondary y-axis
+# =====================================================================================
 
+suppressPackageStartupMessages({
+  library(dplyr)
+  library(ggplot2)
+  library(lubridate)
+  library(scales)
+})
 
+dir.create("figures", showWarnings = FALSE, recursive = TRUE)
 
+# -----------------------------------------------------------------------------
+# Restrict to true common analytic window
+# -----------------------------------------------------------------------------
 
+ts_dat <- panel_causes %>%
+  mutate(
+    event_date = as.Date(event_date),
+    year = year(event_date),
+    month = month(event_date),
+    warm_season = month %in% 4:9,
+    common_overlap = year >= 2019 & year <= 2022
+  ) %>%
+  filter(common_overlap, warm_season) %>%
+  group_by(event_date) %>%
+  summarise(
+    deaths = sum(deaths, na.rm = TRUE),
+    ed_visits = sum(ed_visits, na.rm = TRUE),
+    ems_calls = sum(ems_calls, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  mutate(plot_year = year(event_date))
 
+# -----------------------------------------------------------------------------
+# Choose a scaling factor for mortality so it is visible on the same plot
+# Secondary axis will map back to original mortality counts
+# -----------------------------------------------------------------------------
 
+scale_factor <- max(c(ts_dat$ed_visits, ts_dat$ems_calls), na.rm = TRUE) /
+  max(ts_dat$deaths, na.rm = TRUE)
 
+# -----------------------------------------------------------------------------
+# Plot
+# -----------------------------------------------------------------------------
 
+plot_time_series_dual <- ggplot(ts_dat, aes(x = event_date)) +
+  geom_line(aes(y = ed_visits, color = "ED Visits"), alpha = 0.8, linewidth = 0.4) +
+  geom_line(aes(y = ems_calls, color = "EMS Calls"), alpha = 0.8, linewidth = 0.4) +
+  geom_line(aes(y = deaths * scale_factor, color = "Mortality"), alpha = 0.9, linewidth = 0.5) +
+  facet_wrap(~ plot_year, scales = "free_x", ncol = 2) +
+  scale_color_manual(
+    values = c(
+      "ED Visits" = "#F8766D",
+      "EMS Calls" = "#00BA38",
+      "Mortality" = "#619CFF"
+    )
+  ) +
+  scale_y_continuous(
+    name = "Total Daily Count (ED / EMS)",
+    labels = label_number(),
+    sec.axis = sec_axis(
+      ~ . / scale_factor,
+      name = "Total Daily Count (Mortality)",
+      labels = label_number()
+    )
+  ) +
+  scale_x_date(
+    date_breaks = "2 months",
+    date_labels = "%b %Y"
+  ) +
+  labs(
+    title = "Warm-Season Daily Time Series by Outcome",
+    subtitle = "April–October only; shared overlap window 2019–2022",
+    x = "Date",
+    color = NULL
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    plot.title = element_text(face = "bold"),
+    legend.position = "right",
+    strip.text = element_text(face = "bold"),
+    axis.text.x = element_text(size = 7, angle = 45, hjust = 1)
+  )
 
+plot_time_series_dual
 
+ggsave(
+  filename = "figures/daily_time_series_by_outcome_warmseason_2019_2022_dual_axis.png",
+  plot = plot_time_series_dual,
+  width = 14,
+  height = 10,
+  dpi = 300
+)
 
+ggsave(
+  filename = "figures/daily_time_series_by_outcome_warmseason_2019_2022_dual_axis.pdf",
+  plot = plot_time_series_dual,
+  width = 14,
+  height = 10
+)
 
+suppressPackageStartupMessages({
+  library(zoo)
+})
 
+ts_dat_smooth <- ts_dat %>%
+  arrange(event_date) %>%
+  mutate(
+    deaths_ma7 = zoo::rollmean(deaths, 7, fill = NA, align = "center"),
+    ed_visits_ma7 = zoo::rollmean(ed_visits, 7, fill = NA, align = "center"),
+    ems_calls_ma7 = zoo::rollmean(ems_calls, 7, fill = NA, align = "center")
+  )
 
+scale_factor_ma <- max(c(ts_dat_smooth$ed_visits_ma7, ts_dat_smooth$ems_calls_ma7), na.rm = TRUE) /
+  max(ts_dat_smooth$deaths_ma7, na.rm = TRUE)
+
+plot_time_series_dual_ma <- ggplot(ts_dat_smooth, aes(x = event_date)) +
+  geom_line(aes(y = ed_visits_ma7, color = "ED Visits"), alpha = 0.9, linewidth = 0.5) +
+  geom_line(aes(y = ems_calls_ma7, color = "EMS Calls"), alpha = 0.9, linewidth = 0.5) +
+  geom_line(aes(y = deaths_ma7 * scale_factor_ma, color = "Mortality"), alpha = 0.95, linewidth = 0.6) +
+  facet_wrap(~ plot_year, scales = "free_x", ncol = 2) +
+  scale_color_manual(
+    values = c(
+      "ED Visits" = "#F8766D",
+      "EMS Calls" = "#00BA38",
+      "Mortality" = "#619CFF"
+    )
+  ) +
+  scale_y_continuous(
+    name = "7-day Mean Daily Count (ED / EMS)",
+    sec.axis = sec_axis(
+      ~ . / scale_factor_ma,
+      name = "7-day Mean Daily Count (Mortality)"
+    )
+  ) +
+  scale_x_date(
+    date_breaks = "2 months",
+    date_labels = "%b %Y"
+  ) +
+  labs(
+    title = "Warm-Season Daily Time Series by Outcome",
+    subtitle = "7-day moving average; April–October only; shared overlap window 2019–2022",
+    x = "Date",
+    color = NULL
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    plot.title = element_text(face = "bold"),
+    legend.position = "right",
+    strip.text = element_text(face = "bold"),
+    axis.text.x = element_text(size = 7, angle = 45, hjust = 1)
+  )
+
+plot_time_series_dual_ma
+
+ggsave(
+  filename = "figures/daily_time_series_by_outcome_warmseason_2019_2022_dual_axis_ma7.png",
+  plot = plot_time_series_dual_ma,
+  width = 14,
+  height = 10,
+  dpi = 300
+)
 
 
 

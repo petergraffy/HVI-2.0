@@ -386,9 +386,9 @@ panel_causes <- panel_causes %>%
     community = standardize_community(community),
     event_date = as.Date(event_date),
     year = year(event_date),
-    has_deaths = year >= 1993,
-    has_ed     = year >= 2011,
-    has_ems    = year >= 2019
+    has_deaths = year >= 1993 & year < 2023 & month %in% 5:9,
+    has_ed     = year >= 2011 & year < 2024 & month %in% 5:9,
+    has_ems    = year >= 2019 & month %in% 5:9
   )
 
 # Standardize community areas object
@@ -524,7 +524,7 @@ save_plot(plot_time_series, "daily_time_series_by_outcome.pdf", width = 16, heig
 # -------------------------------------------------------------------------------------
 
 map_dat_allcause <- panel_causes %>%
-  filter(year >= 2019) %>%
+  filter(year >= 2019 & year < 2023 & month %in% 5:9) %>%
   group_by(community) %>%
   summarise(
     deaths = mean(deaths, na.rm = TRUE),
@@ -542,7 +542,7 @@ map_deaths <- ggplot(ca_map_allcause) +
   theme_void() +
   labs(
     title = "Average Daily Mortality",
-    subtitle = "2019–2025 overlap window",
+    subtitle = "2019–2022 overlap window",
     fill = "Count"
   )
 
@@ -552,7 +552,7 @@ map_ed <- ggplot(ca_map_allcause) +
   theme_void() +
   labs(
     title = "Average Daily ED Visits",
-    subtitle = "2019–2025 overlap window",
+    subtitle = "2019–2022 overlap window",
     fill = "Count"
   )
 
@@ -562,7 +562,7 @@ map_ems <- ggplot(ca_map_allcause) +
   theme_void() +
   labs(
     title = "Average Daily EMS Calls",
-    subtitle = "2019–2025 overlap window",
+    subtitle = "2019–2022 overlap window",
     fill = "Count"
   )
 
@@ -580,7 +580,7 @@ save_plot(map_allcause_combo, "map_allcause_three_panel.pdf", width = 16, height
 # -------------------------------------------------------------------------------------
 
 map_dat_cvd <- panel_causes %>%
-  filter(year >= 2019) %>%
+  filter(year >= 2019 & year < 2023 & month %in% 5:9) %>%
   group_by(community) %>%
   summarise(
     death_cvd = mean(death_cvd, na.rm = TRUE),
@@ -598,7 +598,7 @@ map_death_cvd <- ggplot(ca_map_cvd) +
   theme_void() +
   labs(
     title = "CVD Mortality",
-    subtitle = "Mean daily count, 2019–2025",
+    subtitle = "Mean daily count, 2019–2022",
     fill = "Count"
   )
 
@@ -608,7 +608,7 @@ map_ed_cvd <- ggplot(ca_map_cvd) +
   theme_void() +
   labs(
     title = "CVD ED Visits",
-    subtitle = "Mean daily count, 2019–2025",
+    subtitle = "Mean daily count, 2019–2022",
     fill = "Count"
   )
 
@@ -618,7 +618,7 @@ map_ems_cvd <- ggplot(ca_map_cvd) +
   theme_void() +
   labs(
     title = "CVD EMS Calls",
-    subtitle = "Mean daily count, 2019–2025",
+    subtitle = "Mean daily count, 2019–2022",
     fill = "Count"
   )
 
@@ -636,7 +636,7 @@ save_plot(map_cvd_combo, "map_cvd_three_panel.pdf", width = 16, height = 6)
 # -------------------------------------------------------------------------------------
 
 map_dat_composite <- panel_causes %>%
-  filter(year >= 2019) %>%
+  filter(year >= 2019 & year < 2023 & month %in% 5:9) %>%
   group_by(community) %>%
   summarise(
     deaths = mean(deaths, na.rm = TRUE),
@@ -660,7 +660,7 @@ map_composite <- ggplot(ca_map_composite) +
   theme_void() +
   labs(
     title = "Composite Health Burden (Prototype HVI)",
-    subtitle = "Sum of z-scored daily mean mortality, ED, and EMS counts (2019–2025)",
+    subtitle = "Sum of z-scored daily mean mortality, ED, and EMS counts (2019–2022)",
     fill = "Composite"
   )
 
@@ -701,7 +701,7 @@ ts_dat <- panel_causes %>%
     event_date = as.Date(event_date),
     year = year(event_date),
     month = month(event_date),
-    warm_season = month %in% 4:9,
+    warm_season = month %in% 5:9,
     common_overlap = year >= 2019 & year <= 2022
   ) %>%
   filter(common_overlap, warm_season) %>%

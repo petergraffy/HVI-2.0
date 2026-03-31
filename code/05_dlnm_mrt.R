@@ -47,7 +47,7 @@ panel_mrt <- panel_causes %>%
     year = year(event_date),
     month = month(event_date),
     dow = wday(event_date),
-    warm_season = month %in% 4:9,
+    warm_season = month %in% 5:9,
     has_deaths = year >= 1993 & year < 2023,
     has_ed     = year >= 2011 & year < 2024,
     has_ems    = year >= 2019
@@ -145,7 +145,19 @@ estimate_mrt_dlnm <- function(data, outcome, var = "tmax", lag = 5,
   is_sparse <- mean(dat[[outcome]], na.rm = TRUE) < 0.2 ||
     sum(dat[[outcome]] > 0, na.rm = TRUE) < 100
   
-  force_no_lag <- outcome %in% c("ed_dehydration", "death_dehydration")
+  force_no_lag <- outcome %in% c(
+    "death_dehydration",
+    "ed_dehydration",
+    "death_heat",
+    "ed_heat",
+    "death_injury",
+    "ed_renal",
+    "ed_neurologic",
+    "ed_mental",
+    "ed_gi",
+    "ed_injury",
+    "ed_syncope"
+  )
   
   pred_grid <- seq(
     floor(min(dat[[var]], na.rm = TRUE)),
@@ -617,3 +629,392 @@ print(mrt_table %>% arrange(domain = outcome_label))
 
 cat("\nSaved MRT tables to results/mrt/\n")
 cat("Saved response-curve figures to figures/mrt/\n")
+
+
+# =====================================================================================
+# 10) EXPANDED CAUSE-SPECIFIC MRT MODELING
+# Add broader cause-specific endpoints and domain-level plots
+# This block piggybacks off objects/functions already created above:
+#   - panel_mrt
+#   - estimate_mrt_dlnm()
+#   - run_outcome_set()
+#   - screen_outcome()
+#   - save_mrt_plot()
+# =====================================================================================
+
+dir.create("results/mrt_expanded", recursive = TRUE, showWarnings = FALSE)
+dir.create("figures/mrt_expanded", recursive = TRUE, showWarnings = FALSE)
+
+# -------------------------------------------------------------------------------------
+# Rebuild citywide daily totals with ALL available cause-specific outcomes
+# -------------------------------------------------------------------------------------
+
+city_deaths_full <- panel_mrt %>%
+  filter(has_deaths) %>%
+  group_by(event_date, year, month, dow) %>%
+  summarise(
+    tmax = mean(tmax, na.rm = TRUE),
+    tmin = mean(tmin, na.rm = TRUE),
+    tmean = mean(tmean, na.rm = TRUE),
+    humidity = mean(humidity, na.rm = TRUE),
+    
+    deaths = sum(deaths, na.rm = TRUE),
+    death_cvd = sum(death_cvd, na.rm = TRUE),
+    death_respiratory = sum(death_respiratory, na.rm = TRUE),
+    death_renal = sum(death_renal, na.rm = TRUE),
+    death_heat = sum(death_heat, na.rm = TRUE),
+    death_dehydration = sum(death_dehydration, na.rm = TRUE),
+    death_syncope = sum(death_syncope, na.rm = TRUE),
+    death_mental = sum(death_mental, na.rm = TRUE),
+    death_neurologic = sum(death_neurologic, na.rm = TRUE),
+    death_injury = sum(death_injury, na.rm = TRUE),
+    death_gi = sum(death_gi, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+city_ed_full <- panel_mrt %>%
+  filter(has_ed) %>%
+  group_by(event_date, year, month, dow) %>%
+  summarise(
+    tmax = mean(tmax, na.rm = TRUE),
+    tmin = mean(tmin, na.rm = TRUE),
+    tmean = mean(tmean, na.rm = TRUE),
+    humidity = mean(humidity, na.rm = TRUE),
+    
+    ed_visits = sum(ed_visits, na.rm = TRUE),
+    ed_cvd = sum(ed_cvd, na.rm = TRUE),
+    ed_respiratory = sum(ed_respiratory, na.rm = TRUE),
+    ed_renal = sum(ed_renal, na.rm = TRUE),
+    ed_heat = sum(ed_heat, na.rm = TRUE),
+    ed_dehydration = sum(ed_dehydration, na.rm = TRUE),
+    ed_syncope = sum(ed_syncope, na.rm = TRUE),
+    ed_mental = sum(ed_mental, na.rm = TRUE),
+    ed_neurologic = sum(ed_neurologic, na.rm = TRUE),
+    ed_injury = sum(ed_injury, na.rm = TRUE),
+    ed_gi = sum(ed_gi, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+city_ems_full <- panel_mrt %>%
+  filter(has_ems) %>%
+  group_by(event_date, year, month, dow) %>%
+  summarise(
+    tmax = mean(tmax, na.rm = TRUE),
+    tmin = mean(tmin, na.rm = TRUE),
+    tmean = mean(tmean, na.rm = TRUE),
+    humidity = mean(humidity, na.rm = TRUE),
+    
+    ems_calls = sum(ems_calls, na.rm = TRUE),
+    ems_cvd = sum(ems_cvd, na.rm = TRUE),
+    ems_respiratory = sum(ems_respiratory, na.rm = TRUE),
+    ems_heat = sum(ems_heat, na.rm = TRUE),
+    ems_syncope = sum(ems_syncope, na.rm = TRUE),
+    ems_neuro = sum(ems_neuro, na.rm = TRUE),
+    ems_mental = sum(ems_mental, na.rm = TRUE),
+    ems_injury = sum(ems_injury, na.rm = TRUE),
+    ems_gi = sum(ems_gi, na.rm = TRUE),
+    ems_bleeding = sum(ems_bleeding, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+# -------------------------------------------------------------------------------------
+# Expanded outcome sets
+# Note:
+# - lag 7 for mortality domains
+# - lag 5 for most ED domains
+# - lag 3 for most EMS domains
+# - lag 1 for acute syndromes like injury/syncope
+# - dehydration/heat stay in the table but your function may force no-lag
+# -------------------------------------------------------------------------------------
+
+death_outcomes_expanded <- tibble::tribble(
+  ~outcome,              ~label,                     ~lag,
+  "deaths",              "All-Cause Mortality",      7,
+  "death_cvd",           "CVD Mortality",            7,
+  "death_respiratory",   "Respiratory Mortality",    7,
+  "death_renal",         "Renal Mortality",          7,
+  "death_neurologic",    "Neurologic Mortality",     7,
+  "death_mental",        "Mental Health Mortality",  7,
+  "death_gi",            "GI Mortality",             5,
+  "death_injury",        "Injury Mortality",         3,
+  "death_syncope",       "Syncope Mortality",        3,
+  "death_dehydration",   "Dehydration Mortality",    3,
+  "death_heat",          "Heat-Related Mortality",   3
+)
+
+ed_outcomes_expanded <- tibble::tribble(
+  ~outcome,              ~label,                    ~lag,
+  "ed_visits",           "All-Cause ED Visits",     5,
+  "ed_cvd",              "CVD ED Visits",           5,
+  "ed_respiratory",      "Respiratory ED Visits",   5,
+  "ed_renal",            "Renal ED Visits",         3,
+  "ed_neurologic",       "Neurologic ED Visits",    3,
+  "ed_mental",           "Mental Health ED Visits", 3,
+  "ed_gi",               "GI ED Visits",            3,
+  "ed_injury",           "Injury ED Visits",        1,
+  "ed_syncope",          "Syncope ED Visits",       1,
+  "ed_dehydration",      "Dehydration ED Visits",   3,
+  "ed_heat",             "Heat-Related ED Visits",  3
+)
+
+ems_outcomes_expanded <- tibble::tribble(
+  ~outcome,              ~label,                     ~lag,
+  "ems_calls",           "All-Cause EMS Calls",      3,
+  "ems_cvd",             "CVD EMS Calls",            3,
+  "ems_respiratory",     "Respiratory EMS Calls",    3,
+  "ems_neuro",           "Neurologic EMS Calls",     3,
+  "ems_mental",          "Mental Health EMS Calls",  3,
+  "ems_gi",              "GI EMS Calls",             3,
+  "ems_bleeding",        "Bleeding EMS Calls",       3,
+  "ems_injury",          "Injury EMS Calls",         1,
+  "ems_syncope",         "Syncope EMS Calls",        1,
+  "ems_heat",            "Heat-Related EMS Calls",   3
+)
+
+# -------------------------------------------------------------------------------------
+# Only keep outcomes that actually exist in the rebuilt citywide datasets
+# -------------------------------------------------------------------------------------
+
+death_outcomes_expanded <- death_outcomes_expanded %>%
+  filter(outcome %in% names(city_deaths_full))
+
+ed_outcomes_expanded <- ed_outcomes_expanded %>%
+  filter(outcome %in% names(city_ed_full))
+
+ems_outcomes_expanded <- ems_outcomes_expanded %>%
+  filter(outcome %in% names(city_ems_full))
+
+# -------------------------------------------------------------------------------------
+# Screen outcomes before modeling
+# -------------------------------------------------------------------------------------
+
+death_screen_expanded <- bind_rows(lapply(death_outcomes_expanded$outcome, function(x) screen_outcome(city_deaths_full, x)))
+ed_screen_expanded    <- bind_rows(lapply(ed_outcomes_expanded$outcome,    function(x) screen_outcome(city_ed_full, x)))
+ems_screen_expanded   <- bind_rows(lapply(ems_outcomes_expanded$outcome,   function(x) screen_outcome(city_ems_full, x)))
+
+fwrite(death_screen_expanded, "results/mrt_expanded/death_screen_expanded.csv")
+fwrite(ed_screen_expanded,    "results/mrt_expanded/ed_screen_expanded.csv")
+fwrite(ems_screen_expanded,   "results/mrt_expanded/ems_screen_expanded.csv")
+
+death_outcomes_keep_expanded <- death_outcomes_expanded %>%
+  inner_join(death_screen_expanded %>% filter(keep_for_dlnm), by = "outcome")
+
+ed_outcomes_keep_expanded <- ed_outcomes_expanded %>%
+  inner_join(ed_screen_expanded %>% filter(keep_for_dlnm), by = "outcome")
+
+ems_outcomes_keep_expanded <- ems_outcomes_expanded %>%
+  inner_join(ems_screen_expanded %>% filter(keep_for_dlnm), by = "outcome")
+
+# -------------------------------------------------------------------------------------
+# Run MRT estimation
+# -------------------------------------------------------------------------------------
+
+death_results_expanded <- run_outcome_set(city_deaths_full, death_outcomes_keep_expanded, temp_var = "tmax")
+ed_results_expanded    <- run_outcome_set(city_ed_full,     ed_outcomes_keep_expanded,    temp_var = "tmax")
+ems_results_expanded   <- run_outcome_set(city_ems_full,    ems_outcomes_keep_expanded,   temp_var = "tmax")
+
+all_results_expanded <- c(death_results_expanded, ed_results_expanded, ems_results_expanded)
+
+# -------------------------------------------------------------------------------------
+# Collect tables
+# -------------------------------------------------------------------------------------
+
+mrt_table_expanded <- bind_rows(lapply(all_results_expanded, function(x) x$mrt))
+curve_table_expanded <- bind_rows(lapply(all_results_expanded, function(x) x$curve))
+
+# add endpoint and physiologic domain labels
+curve_table_expanded <- curve_table_expanded %>%
+  mutate(
+    endpoint = case_when(
+      str_detect(outcome, "^death") ~ "Mortality",
+      str_detect(outcome, "^ed")    ~ "ED",
+      str_detect(outcome, "^ems")   ~ "EMS",
+      TRUE ~ "Other"
+    ),
+    domain = case_when(
+      outcome %in% c("deaths", "ed_visits", "ems_calls") ~ "All-cause",
+      str_detect(outcome, "cvd")           ~ "Cardiovascular",
+      str_detect(outcome, "respiratory")   ~ "Respiratory",
+      str_detect(outcome, "renal")         ~ "Renal",
+      str_detect(outcome, "neuro")         ~ "Neurologic",
+      str_detect(outcome, "mental")        ~ "Mental Health",
+      str_detect(outcome, "injury")        ~ "Injury",
+      str_detect(outcome, "gi")            ~ "Gastrointestinal",
+      str_detect(outcome, "bleeding")      ~ "Bleeding",
+      str_detect(outcome, "syncope")       ~ "Syncope",
+      str_detect(outcome, "dehydration|heat") ~ "Heat-related",
+      TRUE ~ "Other"
+    )
+  )
+
+mrt_table_expanded <- mrt_table_expanded %>%
+  mutate(
+    endpoint = case_when(
+      str_detect(outcome, "^death") ~ "Mortality",
+      str_detect(outcome, "^ed")    ~ "ED",
+      str_detect(outcome, "^ems")   ~ "EMS",
+      TRUE ~ "Other"
+    ),
+    domain = case_when(
+      outcome %in% c("deaths", "ed_visits", "ems_calls") ~ "All-cause",
+      str_detect(outcome, "cvd")           ~ "Cardiovascular",
+      str_detect(outcome, "respiratory")   ~ "Respiratory",
+      str_detect(outcome, "renal")         ~ "Renal",
+      str_detect(outcome, "neuro")         ~ "Neurologic",
+      str_detect(outcome, "mental")        ~ "Mental Health",
+      str_detect(outcome, "injury")        ~ "Injury",
+      str_detect(outcome, "gi")            ~ "Gastrointestinal",
+      str_detect(outcome, "bleeding")      ~ "Bleeding",
+      str_detect(outcome, "syncope")       ~ "Syncope",
+      str_detect(outcome, "dehydration|heat") ~ "Heat-related",
+      TRUE ~ "Other"
+    )
+  )
+
+fwrite(mrt_table_expanded, "results/mrt_expanded/mrt_table_tmax_warmseason_expanded.csv")
+fwrite(curve_table_expanded, "results/mrt_expanded/mrt_response_curves_tmax_warmseason_expanded.csv")
+
+# -------------------------------------------------------------------------------------
+# Domain-level faceted figures across all endpoints
+# -------------------------------------------------------------------------------------
+
+plot_by_domain <- function(df, domain_name, fill_col, line_col) {
+  ggplot(df, aes(x = temp, y = rr)) +
+    geom_ribbon(aes(ymin = rr_low, ymax = rr_high), alpha = 0.18, fill = fill_col) +
+    geom_line(color = line_col, linewidth = 1) +
+    geom_hline(yintercept = 1, linetype = "dashed", color = "gray40") +
+    geom_vline(aes(xintercept = mrt), linetype = "dotted", color = "firebrick") +
+    facet_wrap(~ outcome_label, scales = "free_y") +
+    labs(
+      title = paste0(domain_name, " Temperature-Response Curves"),
+      subtitle = "Expanded cause-specific outcomes",
+      x = "Daily Maximum Temperature (°C)",
+      y = "Relative Risk"
+    ) +
+    theme_minimal(base_size = 11) +
+    theme(plot.title = element_text(face = "bold"))
+}
+
+domain_names <- unique(curve_table_expanded$domain)
+
+domain_plot_list <- lapply(domain_names, function(dom) {
+  dom_df <- curve_table_expanded %>% filter(domain == dom)
+  
+  fill_col <- dplyr::case_when(
+    dom == "All-cause" ~ "gray70",
+    dom == "Cardiovascular" ~ "firebrick2",
+    dom == "Respiratory" ~ "steelblue",
+    dom == "Renal" ~ "purple",
+    dom == "Neurologic" ~ "darkgreen",
+    dom == "Mental Health" ~ "orchid4",
+    dom == "Injury" ~ "tan4",
+    dom == "Gastrointestinal" ~ "darkorange",
+    dom == "Bleeding" ~ "brown3",
+    dom == "Syncope" ~ "goldenrod",
+    dom == "Heat-related" ~ "red3",
+    TRUE ~ "gray70"
+  )
+  
+  line_col <- dplyr::case_when(
+    dom == "All-cause" ~ "gray25",
+    dom == "Cardiovascular" ~ "firebrick4",
+    dom == "Respiratory" ~ "steelblue4",
+    dom == "Renal" ~ "purple4",
+    dom == "Neurologic" ~ "darkgreen",
+    dom == "Mental Health" ~ "orchid4",
+    dom == "Injury" ~ "tan4",
+    dom == "Gastrointestinal" ~ "darkorange4",
+    dom == "Bleeding" ~ "brown4",
+    dom == "Syncope" ~ "goldenrod4",
+    dom == "Heat-related" ~ "red4",
+    TRUE ~ "gray30"
+  )
+  
+  p <- plot_by_domain(dom_df, dom, fill_col, line_col)
+  
+  file_stub <- str_replace_all(str_to_lower(dom), "[^a-z0-9]+", "_")
+  
+  save_mrt_plot(p, paste0("expanded_", file_stub, "_mrt_curves.png"), width = 12, height = 8)
+  save_mrt_plot(p, paste0("expanded_", file_stub, "_mrt_curves.pdf"), width = 12, height = 8)
+  
+  p
+})
+
+# -------------------------------------------------------------------------------------
+# Endpoint-wide expanded figures
+# -------------------------------------------------------------------------------------
+
+plot_curves_mort_expanded <- curve_table_expanded %>%
+  filter(endpoint == "Mortality") %>%
+  ggplot(aes(x = temp, y = rr)) +
+  geom_ribbon(aes(ymin = rr_low, ymax = rr_high), alpha = 0.15, fill = "steelblue") +
+  geom_line(color = "steelblue4", linewidth = 0.9) +
+  geom_hline(yintercept = 1, linetype = "dashed", color = "gray40") +
+  geom_vline(aes(xintercept = mrt), linetype = "dotted", color = "firebrick") +
+  facet_wrap(~ outcome_label, scales = "free_y") +
+  labs(
+    title = "Expanded Mortality Temperature-Response Curves",
+    subtitle = "Warm season only",
+    x = "Daily Maximum Temperature (°C)",
+    y = "Relative Risk"
+  ) +
+  theme_minimal(base_size = 11) +
+  theme(plot.title = element_text(face = "bold"))
+
+plot_curves_ed_expanded <- curve_table_expanded %>%
+  filter(endpoint == "ED") %>%
+  ggplot(aes(x = temp, y = rr)) +
+  geom_ribbon(aes(ymin = rr_low, ymax = rr_high), alpha = 0.15, fill = "darkorange") +
+  geom_line(color = "darkorange4", linewidth = 0.9) +
+  geom_hline(yintercept = 1, linetype = "dashed", color = "gray40") +
+  geom_vline(aes(xintercept = mrt), linetype = "dotted", color = "firebrick") +
+  facet_wrap(~ outcome_label, scales = "free_y") +
+  labs(
+    title = "Expanded ED Temperature-Response Curves",
+    subtitle = "Warm season only",
+    x = "Daily Maximum Temperature (°C)",
+    y = "Relative Risk"
+  ) +
+  theme_minimal(base_size = 11) +
+  theme(plot.title = element_text(face = "bold"))
+
+plot_curves_ems_expanded <- curve_table_expanded %>%
+  filter(endpoint == "EMS") %>%
+  ggplot(aes(x = temp, y = rr)) +
+  geom_ribbon(aes(ymin = rr_low, ymax = rr_high), alpha = 0.15, fill = "darkgreen") +
+  geom_line(color = "darkgreen", linewidth = 0.9) +
+  geom_hline(yintercept = 1, linetype = "dashed", color = "gray40") +
+  geom_vline(aes(xintercept = mrt), linetype = "dotted", color = "firebrick") +
+  facet_wrap(~ outcome_label, scales = "free_y") +
+  labs(
+    title = "Expanded EMS Temperature-Response Curves",
+    subtitle = "Warm season only",
+    x = "Daily Maximum Temperature (°C)",
+    y = "Relative Risk"
+  ) +
+  theme_minimal(base_size = 11) +
+  theme(plot.title = element_text(face = "bold"))
+
+save_mrt_plot(plot_curves_mort_expanded, "expanded_mortality_mrt_curves_faceted.png", width = 14, height = 10)
+save_mrt_plot(plot_curves_mort_expanded, "expanded_mortality_mrt_curves_faceted.pdf", width = 14, height = 10)
+
+save_mrt_plot(plot_curves_ed_expanded, "expanded_ed_mrt_curves_faceted.png", width = 14, height = 10)
+save_mrt_plot(plot_curves_ed_expanded, "expanded_ed_mrt_curves_faceted.pdf", width = 14, height = 10)
+
+save_mrt_plot(plot_curves_ems_expanded, "expanded_ems_mrt_curves_faceted.png", width = 14, height = 10)
+save_mrt_plot(plot_curves_ems_expanded, "expanded_ems_mrt_curves_faceted.pdf", width = 14, height = 10)
+
+# -------------------------------------------------------------------------------------
+# Optional: a single physiologic-domain summary table
+# -------------------------------------------------------------------------------------
+
+mrt_domain_summary <- mrt_table_expanded %>%
+  arrange(endpoint, domain, outcome_label)
+
+fwrite(mrt_domain_summary, "results/mrt_expanded/mrt_domain_summary.csv")
+
+cat("\nExpanded MRT modeling complete.\n")
+cat("Saved expanded tables to results/mrt_expanded/\n")
+cat("Saved expanded figures to figures/mrt_expanded/\n")
+print(mrt_table_expanded %>% select(endpoint, domain, outcome_label, mrt, mean_daily_count, model_type) %>% arrange(endpoint, domain, outcome_label))
+

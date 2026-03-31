@@ -71,7 +71,7 @@ panel_heat <- panel_causes %>%
     year = year(event_date),
     month = month(event_date),
     dow = wday(event_date),
-    warm_season = month %in% 4:9,
+    warm_season = month %in% 5:9,
     overlap_3src = year >= 2019 & year <= 2022
   ) %>%
   filter(warm_season)
@@ -175,7 +175,11 @@ heat_compare <- heat_ref %>%
 fwrite(heat_compare, "results/heat_day_vs_nonheat_summary_2019_2022.csv")
 
 # Plot: hot vs non-hot mean all-cause burden
-plot_heat_contrast_dat <- panel_heat %>%
+plot_heat_contrast_dat <- heat_ref %>%
+  mutate(heat_group = case_when(
+      extreme_heat95 == 1 ~ "Extreme heat (>=95th pct)",
+      TRUE ~ "Non-extreme"
+    )) %>% 
   filter(overlap_3src) %>%
   mutate(
     heat_group = ifelse(extreme_heat95 == 1, "Extreme heat", "Non-extreme")
@@ -329,7 +333,7 @@ fit_heat_model_by_community <- function(df, outcome_var, heat_var = "extreme_hea
 }
 
 # Shared overlap window for 3-endpoint HVI
-panel_overlap <- panel_heat %>%
+panel_overlap <- heat_ref %>%
   filter(overlap_3src)
 
 # All-cause endpoints
@@ -354,19 +358,19 @@ hvi_ems <- panel_overlap %>%
 # Optional: heat-specific endpoint models
 heat_specific_mort <- panel_overlap %>%
   group_by(community) %>%
-  group_modify(~ fit_heat_model_by_community(.x, outcome_var = "death_heat")) %>%
+  group_modify(~ fit_heat_model_by_community(.x, outcome_var = "death_cvd")) %>%
   ungroup() %>%
   rename_with(~ paste0("mort_heat_", .x), -community)
 
 heat_specific_ed <- panel_overlap %>%
   group_by(community) %>%
-  group_modify(~ fit_heat_model_by_community(.x, outcome_var = "ed_heat")) %>%
+  group_modify(~ fit_heat_model_by_community(.x, outcome_var = "ed_cvd")) %>%
   ungroup() %>%
   rename_with(~ paste0("ed_heat_", .x), -community)
 
 heat_specific_ems <- panel_overlap %>%
   group_by(community) %>%
-  group_modify(~ fit_heat_model_by_community(.x, outcome_var = "ems_heat")) %>%
+  group_modify(~ fit_heat_model_by_community(.x, outcome_var = "ems_cvd")) %>%
   ungroup() %>%
   rename_with(~ paste0("ems_heat_", .x), -community)
 
@@ -553,3 +557,44 @@ print(summary(hvi_proto))
 
 cat("\nCitywide extreme heat effects:\n")
 print(citywide_heat_effects)
+
+
+# -------------------------------------------------------------------------------------
+# 7) Optional: citywide model for quick overall signal
+# -------------------------------------------------------------------------------------
+
+city_mod_deaths90 <- glm(
+  deaths ~ hot_day90 + scale(humidity) + factor(community) + factor(year) + factor(month) + factor(dow),
+  family = quasipoisson(link = "log"),
+  data = panel_overlap
+)
+
+city_mod_ed90 <- glm(
+  ed_visits ~ hot_day90 + scale(humidity) + factor(community) + factor(year) + factor(month) + factor(dow),
+  family = quasipoisson(link = "log"),
+  data = panel_overlap
+)
+
+city_mod_ems90 <- glm(
+  ems_calls ~ hot_day90 + scale(humidity) + factor(community) + factor(year) + factor(month) + factor(dow),
+  family = quasipoisson(link = "log"),
+  data = panel_overlap
+)
+
+citywide_heat_effects <- bind_rows(
+  tidy(city_mod_deaths90) %>% filter(term == "hot_day90") %>% mutate(outcome = "Mortality"),
+  tidy(city_mod_ed90)     %>% filter(term == "hot_day90") %>% mutate(outcome = "ED Visits"),
+  tidy(city_mod_ems90)    %>% filter(term == "hot_day90") %>% mutate(outcome = "EMS Calls")
+) %>%
+  mutate(
+    rr = exp(estimate),
+    rr_low = exp(estimate - 1.96 * std.error),
+    rr_high = exp(estimate + 1.96 * std.error)
+  )
+
+fwrite(citywide_heat_effects, "results/citywide_extreme_heat_effects90_2019_2022.csv")
+
+cat("\nCitywide extreme heat effects:\n")
+print(citywide_heat_effects)
+
+

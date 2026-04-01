@@ -1672,6 +1672,255 @@ if (length(final_selected_vars) >= 2) {
   )
 }
 
+# -----------------------------
+# DOMAIN COLOR PALETTE
+# -----------------------------
+domain_palette <- c(
+  "ED" = "#1b9e77",        # teal-green
+  "EMS" = "#d95f02",       # orange
+  "Mortality" = "#7570b3"  # purple
+)
+
+# ensure domain exists
+interaction_terms_by_endpoint <- interaction_terms_by_endpoint %>%
+  mutate(
+    domain = case_when(
+      str_detect(endpoint_key, "^ed_") ~ "ED",
+      str_detect(endpoint_key, "^ems_") ~ "EMS",
+      str_detect(endpoint_key, "^death") ~ "Mortality",
+      TRUE ~ "Other"
+    )
+  )
+
+rf_importance_by_endpoint <- rf_importance_by_endpoint %>%
+  mutate(
+    domain = case_when(
+      str_detect(endpoint_key, "^ed_") ~ "ED",
+      str_detect(endpoint_key, "^ems_") ~ "EMS",
+      str_detect(endpoint_key, "^death") ~ "Mortality",
+      TRUE ~ "Other"
+    )
+  )
+
+
+fig_violin <- interaction_terms_by_endpoint %>%
+  filter(variable %in% final_selected_vars) %>%
+  mutate(variable_label = pretty_var_label(variable)) %>%
+  ggplot(aes(x = estimate, y = fct_reorder(variable_label, estimate))) +
+  
+  geom_violin(
+    fill = "grey85",
+    color = NA,
+    alpha = 0.8
+  ) +
+  
+  geom_point(
+    aes(color = domain, size = -log10(p.value)),
+    alpha = 0.9
+  ) +
+  
+  geom_vline(xintercept = 0, linetype = "dashed", color = "grey40") +
+  
+  scale_color_manual(values = domain_palette) +
+  
+  labs(
+    title = "Heat × vulnerability interaction effects across endpoints",
+    subtitle = "Points colored by domain; size reflects statistical significance",
+    x = "Interaction coefficient",
+    y = NULL,
+    color = "Endpoint domain",
+    size = expression(-log[10](p))
+  ) +
+  
+  theme_pub(base_size = 12) + facet_grid(~ domain, scales = "free_x", space = "free_x")
+
+ggsave(
+  file.path(out_dir, "fig_interaction_violin_domain.png"),
+  fig_violin,
+  width = 12,
+  height = 7,
+  dpi = 400
+)
+
+
+fig_rf_swarm <- rf_importance_by_endpoint %>%
+  filter(variable %in% final_selected_vars) %>%
+  mutate(variable_label = pretty_var_label(variable)) %>%
+  ggplot(aes(x = importance, y = fct_reorder(variable_label, importance))) +
+  
+  geom_point(
+    aes(color = domain),
+    position = position_jitter(height = 0.15),
+    alpha = 0.8,
+    size = 2.5
+  ) +
+  
+  stat_summary(
+    fun = mean,
+    geom = "point",
+    shape = 18,
+    size = 4,
+    color = "black"
+  ) +
+  
+  scale_color_manual(values = domain_palette) +
+  
+  labs(
+    title = "Random forest importance across endpoints",
+    subtitle = "Colored by domain; diamonds represent mean importance",
+    x = "Permutation importance",
+    y = NULL,
+    color = "Endpoint domain"
+  ) +
+  
+  theme_pub(base_size = 12)
+
+ggsave(
+  file.path(out_dir, "fig_rf_importance_domain.png"),
+  fig_rf_swarm,
+  width = 12,
+  height = 7,
+  dpi = 400
+)
+
+
+fig_heatmap <- interaction_terms_by_endpoint %>%
+  mutate(
+    variable_label = pretty_var_label(variable),
+    endpoint_label = endpoint_key
+  ) %>%
+  group_by(endpoint_label, variable_label) %>%
+  summarise(
+    estimate = mean(estimate, na.rm = TRUE),
+    p.value = mean(p.value, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  filter(variable_label %in% pretty_var_label(final_selected_vars)) %>%
+  
+  ggplot(aes(x = endpoint_label, y = variable_label, fill = estimate)) +
+  
+  geom_tile(color = "white", linewidth = 0.2) +
+  
+  geom_point(
+    data = ~ dplyr::filter(.x, p.value < 0.05),
+    size = 2,
+    color = "black"
+  ) +
+  
+  scale_fill_gradient2(
+    low = "#2c7bb6",     # blue
+    mid = "white",
+    high = "#d7191c",    # red
+    midpoint = 0,
+    limits = c(-0.1, 0.4),  # adjust based on your scale
+    oob = scales::squish,
+    name = "Interaction\ncoefficient"
+  ) +
+  
+  labs(
+    title = "Heat–vulnerability interaction patterns across endpoints",
+    subtitle = "Red = amplification of heat risk; blue = attenuation; dots indicate p < 0.05",
+    x = NULL,
+    y = NULL
+  ) +
+  
+  theme_pub(base_size = 11) +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    panel.grid = element_blank(),
+    legend.position = "bottom"
+  ) 
+
+ggsave(
+  file.path(out_dir, "fig_interaction_heatmap_clean.png"),
+  fig_heatmap,
+  width = 14,
+  height = 7,
+  dpi = 400
+)
+
+
+
+# Figure: endpoint-specific interaction effects for top vulnerability variables
+# clean single-panel version with domain colors
+
+fig_interaction_violin <- interaction_terms_by_endpoint %>%
+  filter(variable %in% top_interaction_vars, endpoint_key %in% endpoint_focus) %>%
+  group_by(variable_label) %>%
+  mutate(mean_abs = mean(abs(estimate), na.rm = TRUE)) %>%
+  ungroup() %>%
+  mutate(
+    variable_label = fct_reorder(variable_label, mean_abs),
+    domain = factor(domain, levels = c("ED", "EMS", "Mortality"))
+  ) %>%
+  ggplot(aes(x = estimate, y = variable_label)) +
+  
+  geom_vline(
+    xintercept = 0,
+    linewidth = 0.4,
+    linetype = "dashed",
+    color = "grey45"
+  ) +
+  
+  geom_violin(
+    fill = "grey88",
+    color = NA,
+    alpha = 0.9,
+    scale = "width",
+    trim = FALSE
+  ) +
+  
+  geom_boxplot(
+    width = 0.10,
+    outlier.shape = NA,
+    fill = "white",
+    color = "grey55",
+    linewidth = 0.35,
+    alpha = 0.9
+  ) +
+  
+  ggbeeswarm::geom_quasirandom(
+    aes(color = domain, size = -log10(p.value)),
+    width = 0.14,
+    alpha = 0.85,
+    dodge.width = 0,
+    varwidth = FALSE
+  ) +
+  
+  scale_color_manual(
+    values = domain_palette,
+    name = "Endpoint domain"
+  ) +
+  
+  scale_size_continuous(
+    name = expression(-log[10](p)),
+    range = c(1.8, 4.6)
+  ) +
+  
+  labs(
+    title = "Endpoint-specific interaction effects for top vulnerability variables",
+    subtitle = "Violin width shows the cross-endpoint distribution; points are colored by domain",
+    x = "Heat × vulnerability interaction coefficient",
+    y = NULL
+  ) +
+  
+  theme_pub(base_size = base_size) +
+  theme(
+    panel.grid.major.y = element_line(linewidth = 0.3, color = "grey85"),
+    panel.grid.major.x = element_blank(),
+    legend.position = "bottom"
+  )
+
+ggsave(
+  filename = file.path(out_dir, "fig_interaction_violin_beeswarm.png"),
+  plot = fig_interaction_violin,
+  width = 11.5,
+  height = 8,
+  dpi = 400
+)
+
+
+
 
 # -----------------------------
 # 8. CONSOLE SUMMARY + SAVE OBJECTS

@@ -583,16 +583,21 @@ write_csv(rf_importance_by_endpoint, file.path(out_dir, "rf_importance_by_endpoi
 write_csv(rf_importance_summary, file.path(out_dir, "rf_importance_summary.csv"))
 
 # candidate set for interaction stage
+# keep only baseline vulnerability variables, not heat_dose or anything else
 rf_candidate_vars <- rf_importance_summary %>%
+  filter(variable %in% vuln_vars_screened) %>%
   filter(n_positive_importance >= min_endpoints_with_rf_signal) %>%
   slice_head(n = rf_top_n) %>%
   pull(variable)
 
 if (length(rf_candidate_vars) < 3) {
   rf_candidate_vars <- rf_importance_summary %>%
+    filter(variable %in% vuln_vars_screened) %>%
     slice_head(n = min(8, n())) %>%
     pull(variable)
 }
+
+print(rf_candidate_vars)
 
 # -----------------------------
 # 4. INTERACTION-AWARE GAM REFINEMENT
@@ -600,6 +605,18 @@ if (length(rf_candidate_vars) < 3) {
 interaction_results <- list()
 interaction_fit_stats <- list()
 interaction_skip_log <- list()
+
+# rebuild calendar fields defensively
+hvi_model_matrix <- hvi_model_matrix %>%
+  mutate(
+    date = as.Date(date),
+    year = as.integer(year),
+    doy = lubridate::yday(date),
+    dow = factor(
+      lubridate::wday(date, label = TRUE, abbr = TRUE),
+      levels = c("Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat")
+    )
+  )
 
 for (i in seq_len(nrow(hvi_endpoint_metadata))) {
   
@@ -651,6 +668,7 @@ for (i in seq_len(nrow(hvi_endpoint_metadata))) {
       drop_na(pop_offset)
   }
   
+  # keep only candidate vars that are actually present
   vars_here <- rf_candidate_vars[rf_candidate_vars %in% names(df_tmp)]
   
   if (length(vars_here) == 0) {
@@ -663,10 +681,20 @@ for (i in seq_len(nrow(hvi_endpoint_metadata))) {
     next
   }
   
+  # force candidate vars numeric
+  for (v in vars_here) {
+    df_tmp[[v]] <- suppressWarnings(as.numeric(df_tmp[[v]]))
+  }
+  
+  # first impute missing candidate vars
+  df_tmp <- median_impute_vars(df_tmp, vars_here)
+  
+  # then keep only vars with real variation
   var_tbl <- tibble(variable = vars_here) %>%
     mutate(
-      sd_val = map_dbl(variable, ~ sd(df_tmp[[.x]], na.rm = TRUE)),
-      keep = is.finite(sd_val) & sd_val > 0
+      n_unique = map_int(variable, ~ dplyr::n_distinct(df_tmp[[.x]][is.finite(df_tmp[[.x]])])),
+      sd_val   = map_dbl(variable, ~ sd(df_tmp[[.x]], na.rm = TRUE)),
+      keep     = is.finite(sd_val) & sd_val > 0 & n_unique >= 2
     )
   
   vars_here <- var_tbl %>%
@@ -683,8 +711,7 @@ for (i in seq_len(nrow(hvi_endpoint_metadata))) {
     next
   }
   
-  df_tmp <- median_impute_vars(df_tmp, vars_here)
-  
+  # final diagnostics
   n_rows <- nrow(df_tmp)
   total_events <- sum(df_tmp$outcome, na.rm = TRUE)
   outcome_sd <- sd(df_tmp$outcome, na.rm = TRUE)
@@ -938,7 +965,199 @@ variable_selection_methods_table <- selected_variables_final %>%
 write_csv(variable_selection_methods_table, file.path(out_dir, "variable_selection_methods_table.csv"))
 
 # -----------------------------
-# 6. CORRELATION MATRIX FOR FINAL VARIABLES
+# 6. CLEAN LABELS + CORRELATION MATRIX + PUBLICATION-READY FIGURES
+# -----------------------------
+suppressPackageStartupMessages({
+  library(tidyverse)
+  library(ggbeeswarm)
+  library(forcats)
+  library(scales)
+})
+
+# -----------------------------
+# 6. CLEAN LABELS + DEDUPLICATION + PUBLICATION-READY FIGURES
+# -----------------------------
+suppressPackageStartupMessages({
+  library(tidyverse)
+  library(ggbeeswarm)
+  library(forcats)
+  library(scales)
+  library(ggrepel)
+})
+
+# -----------------------------
+# 6A. CLEAN LABEL DICTIONARY
+# -----------------------------
+var_label_dict <- c(
+  # population / structure
+  "z_pop_density_km2" = "Population density (per km²)",
+  "z_total_pop" = "Population size",
+  
+  # ACS / demographics
+  "z_mean_age" = "Mean age",
+  "z_median_age" = "Median age",
+  "z_mean_black" = "Proportion Black",
+  "z_mean_hisp" = "Proportion Hispanic",
+  "z_mean_white" = "Proportion White",
+  "z_mean_asian" = "Proportion Asian",
+  "z_mean_income" = "Mean income",
+  "z_median_income" = "Median income",
+  "z_mean_unemployed" = "Proportion unemployed",
+  "z_mean_employed" = "Proportion employed",
+  "z_mean_college" = "College educated",
+  "z_mean_hs" = "High school educated",
+  "z_mean_male" = "Proportion male",
+  "z_mean_female" = "Proportion female",
+  
+  # environment / housing / AC
+  "z_ndvi" = "NDVI",
+  "z_mean_ndvi" = "NDVI",
+  "z_ac_prob" = "Air conditioning prevalence",
+  "z_ac_cbsa_rank" = "Air conditioning percentile rank",
+  "z_no2" = "NO2",
+  "z_pm25" = "PM2.5",
+  
+  # SVI themes
+  "z_svi_rpl_theme1" = "SVI: Socioeconomic status",
+  "z_svi_rpl_theme2" = "SVI: Household composition & disability",
+  "z_svi_rpl_theme3" = "SVI: Minority status & language",
+  "z_svi_rpl_theme4" = "SVI: Housing type & transportation",
+  "z_svi_rpl_themes" = "SVI: Overall vulnerability",
+  
+  # SVI components
+  "z_svi_ep_pov" = "Poverty",
+  "z_svi_ep_unemp" = "Unemployment",
+  "z_svi_ep_nohsdp" = "No high school diploma",
+  "z_svi_ep_age65" = "Age 65+",
+  "z_svi_ep_age17" = "Age <18",
+  "z_svi_ep_disabl" = "Disability",
+  "z_svi_ep_sngpnt" = "Single-parent households",
+  "z_svi_ep_limeng" = "Limited English proficiency",
+  "z_svi_ep_minrty" = "Minority population",
+  "z_svi_ep_munit" = "Multi-unit housing",
+  "z_svi_ep_mobile" = "Mobile homes",
+  "z_svi_ep_crowd" = "Crowding",
+  "z_svi_ep_noveh" = "No vehicle access",
+  "z_svi_ep_groupq" = "Group quarters",
+  "z_svi_ep_uninsur" = "Uninsured",
+  "z_svi_ep_noint" = "No internet access",
+  "z_svi_ep_hburd" = "Housing cost burden"
+)
+
+pretty_var_label <- function(x) {
+  out <- unname(var_label_dict[x])
+  fallback <- x %>%
+    str_remove("^z_") %>%
+    str_replace_all("_", " ") %>%
+    str_replace_all("\\bNdvi\\b", "NDVI") %>%
+    str_replace_all("\\bNo2\\b", "NO2") %>%
+    str_replace_all("\\bPm25\\b", "PM2.5") %>%
+    str_replace_all("\\bAc\\b", "AC") %>%
+    str_replace_all("\\bSvi\\b", "SVI") %>%
+    str_to_title()
+  out[is.na(out)] <- fallback[is.na(out)]
+  out
+}
+
+pretty_endpoint_label <- function(x) {
+  case_when(
+    x == "deaths" ~ "All-cause mortality",
+    x == "death_cvd" ~ "CVD mortality",
+    x == "death_injury" ~ "Injury mortality",
+    x == "death_mental" ~ "Mental health mortality",
+    x == "death_renal" ~ "Renal mortality",
+    x == "death_respiratory" ~ "Respiratory mortality",
+    
+    x == "ed_visits" ~ "All-cause ED visits",
+    x == "ed_cvd" ~ "CVD ED visits",
+    x == "ed_dehydration" ~ "Dehydration ED visits",
+    x == "ed_injury" ~ "Injury ED visits",
+    x == "ed_renal" ~ "Renal ED visits",
+    x == "ed_respiratory" ~ "Respiratory ED visits",
+    x == "ed_syncope" ~ "Syncope ED visits",
+    
+    x == "ems_calls" ~ "All-cause EMS calls",
+    x == "ems_bleeding" ~ "Bleeding EMS calls",
+    x == "ems_cvd" ~ "CVD EMS calls",
+    x == "ems_gi" ~ "GI EMS calls",
+    x == "ems_injury" ~ "Injury EMS calls",
+    x == "ems_mental" ~ "Mental health EMS calls",
+    x == "ems_neuro" ~ "Neurologic EMS calls",
+    x == "ems_respiratory" ~ "Respiratory EMS calls",
+    x == "ems_syncope" ~ "Syncope EMS calls",
+    TRUE ~ x
+  )
+}
+
+theme_pub <- function(base_size = 12) {
+  theme_minimal(base_size = base_size) +
+    theme(
+      panel.grid.minor = element_blank(),
+      panel.grid.major.y = element_line(linewidth = 0.3, color = "grey85"),
+      panel.grid.major.x = element_blank(),
+      axis.title = element_text(face = "bold"),
+      plot.title = element_text(face = "bold"),
+      plot.subtitle = element_text(color = "grey30"),
+      strip.text = element_text(face = "bold"),
+      legend.position = "bottom"
+    )
+}
+
+# -----------------------------
+# 6B. DROP DUPLICATE UNEMPLOYMENT REPRESENTATIONS
+# Prefer SVI unemployment over ACS proportion unemployed
+# -----------------------------
+drop_vars <- c("z_mean_unemployed")
+keep_vars <- setdiff(unique(c(final_selected_vars, selection_summary$variable)), drop_vars)
+
+selection_summary <- selection_summary %>%
+  filter(!variable %in% drop_vars) %>%
+  mutate(variable_label = pretty_var_label(variable))
+
+rf_importance_by_endpoint <- rf_importance_by_endpoint %>%
+  filter(!variable %in% drop_vars) %>%
+  mutate(
+    variable_label = pretty_var_label(variable),
+    endpoint_label = pretty_endpoint_label(endpoint_key)
+  )
+
+interaction_terms_by_endpoint <- interaction_terms_by_endpoint %>%
+  filter(!variable %in% drop_vars) %>%
+  mutate(
+    variable_label = pretty_var_label(variable),
+    endpoint_label = pretty_endpoint_label(endpoint_key)
+  )
+
+selected_variables_final <- selected_variables_final %>%
+  filter(!variable %in% drop_vars) %>%
+  mutate(variable_label = pretty_var_label(variable))
+
+final_selected_vars <- setdiff(final_selected_vars, drop_vars)
+
+# -----------------------------
+# 6C. SMALL HELPER SUBSETS FOR CLEANER PLOTS
+# -----------------------------
+top_rf_vars <- selection_summary %>%
+  slice_max(order_by = mean_rf_importance, n = plot_top_n) %>%
+  pull(variable)
+
+top_interaction_vars <- selection_summary %>%
+  slice_max(order_by = mean_abs_beta, n = plot_top_n) %>%
+  pull(variable)
+
+top_scatter_vars <- selection_summary %>%
+  slice_max(order_by = overall_score, n = 10) %>%
+  pull(variable)
+
+# for less messy endpoint-specific plots, keep a narrower endpoint set
+endpoint_focus <- c(
+  "deaths", "death_cvd",
+  "ed_visits", "ed_injury", "ed_respiratory",
+  "ems_calls", "ems_cvd", "ems_injury", "ems_mental", "ems_syncope"
+)
+
+# -----------------------------
+# 6D. CORRELATION MATRIX FOR FINAL VARIABLES
 # -----------------------------
 if (length(final_selected_vars) >= 2) {
   corr_mat <- cor(
@@ -961,12 +1180,13 @@ if (length(final_selected_vars) >= 2) {
 # -----------------------------
 # 7. PUBLICATION-READY FIGURES
 # -----------------------------
-# Figure 1: RF importance
+
+# Figure 1: RF importance bar plot
 fig_rf <- selection_summary %>%
   slice_max(order_by = mean_rf_importance, n = plot_top_n) %>%
   mutate(variable_label = fct_reorder(variable_label, mean_rf_importance)) %>%
   ggplot(aes(x = mean_rf_importance, y = variable_label)) +
-  geom_col() +
+  geom_col(width = 0.75) +
   labs(
     title = "Random forest screening of baseline vulnerability variables",
     subtitle = "Average permutation importance across heat-health endpoints",
@@ -983,12 +1203,39 @@ ggsave(
   dpi = 400
 )
 
-# Figure 2: Interaction importance
+# Figure 2: RF importance beeswarm, faceted by source and limited endpoint set
+fig_rf_beeswarm <- rf_importance_by_endpoint %>%
+  filter(variable %in% top_rf_vars, endpoint_key %in% endpoint_focus) %>%
+  group_by(variable_label) %>%
+  mutate(mean_imp = mean(importance, na.rm = TRUE)) %>%
+  ungroup() %>%
+  mutate(variable_label = fct_reorder(variable_label, mean_imp)) %>%
+  ggplot(aes(x = importance, y = variable_label)) +
+  ggbeeswarm::geom_quasirandom(alpha = 0.8, size = 2.1, width = 0.15) +
+  stat_summary(fun = mean, geom = "point", size = 3.3, shape = 18) +
+  facet_wrap(~ source, scales = "free_x") +
+  labs(
+    title = "Distribution of random forest importance across endpoints",
+    subtitle = "Restricted to selected representative endpoints; diamonds mark means",
+    x = "Permutation importance",
+    y = NULL
+  ) +
+  theme_pub(base_size = base_size)
+
+ggsave(
+  filename = file.path(out_dir, "fig_rf_importance_beeswarm.png"),
+  plot = fig_rf_beeswarm,
+  width = 12,
+  height = 8,
+  dpi = 400
+)
+
+# Figure 3: interaction importance bar plot
 fig_interaction <- selection_summary %>%
   slice_max(order_by = mean_abs_beta, n = plot_top_n) %>%
   mutate(variable_label = fct_reorder(variable_label, mean_abs_beta)) %>%
   ggplot(aes(x = mean_abs_beta, y = variable_label)) +
-  geom_col() +
+  geom_col(width = 0.75) +
   labs(
     title = "Interaction-based vulnerability selection",
     subtitle = "Average absolute heat × vulnerability interaction coefficient across endpoints",
@@ -1005,31 +1252,83 @@ ggsave(
   dpi = 400
 )
 
-# Figure 3: Selection heatmap
+# Figure 4: cleaner interaction violin, faceted by source and restricted endpoint set
+fig_interaction_violin <- interaction_terms_by_endpoint %>%
+  filter(variable %in% top_interaction_vars, endpoint_key %in% endpoint_focus) %>%
+  group_by(variable_label) %>%
+  mutate(mean_abs = mean(abs(estimate), na.rm = TRUE)) %>%
+  ungroup() %>%
+  mutate(variable_label = fct_reorder(variable_label, mean_abs)) %>%
+  ggplot(aes(x = estimate, y = variable_label)) +
+  geom_vline(xintercept = 0, linewidth = 0.4, linetype = "dashed", color = "grey40") +
+  geom_violin(fill = "grey85", color = NA, alpha = 0.8, scale = "width") +
+  ggbeeswarm::geom_quasirandom(aes(size = -log10(p.value)), alpha = 0.8, width = 0.12) +
+  scale_size_continuous(name = expression(-log[10](p)), range = c(1.5, 4.0)) +
+  facet_wrap(~ source, scales = "free_x") +
+  labs(
+    title = "Endpoint-specific interaction effects for top vulnerability variables",
+    subtitle = "Restricted to representative endpoints to improve readability",
+    x = "Heat × vulnerability interaction coefficient",
+    y = NULL
+  ) +
+  theme_pub(base_size = base_size)
+
+ggsave(
+  filename = file.path(out_dir, "fig_interaction_violin_beeswarm.png"),
+  plot = fig_interaction_violin,
+  width = 13,
+  height = 8.5,
+  dpi = 400
+)
+
+# Figure 5: combined selection score lollipop
+fig_combined_score <- selection_summary %>%
+  slice_max(order_by = overall_score, n = plot_top_n) %>%
+  mutate(variable_label = fct_reorder(variable_label, overall_score)) %>%
+  ggplot(aes(x = overall_score, y = variable_label)) +
+  geom_segment(aes(x = 0, xend = overall_score, y = variable_label, yend = variable_label),
+               linewidth = 1.1, color = "grey75") +
+  geom_point(size = 4) +
+  labs(
+    title = "Overall variable selection ranking",
+    subtitle = "Composite score combining RF importance, interaction strength, sign consistency, and significance",
+    x = "Overall selection score",
+    y = NULL
+  ) +
+  theme_pub(base_size = base_size)
+
+ggsave(
+  filename = file.path(out_dir, "fig_overall_selection_score_lollipop.png"),
+  plot = fig_combined_score,
+  width = 10,
+  height = 7,
+  dpi = 400
+)
+
+# Figure 6: selection heatmap
+endpoint_order <- hvi_endpoint_metadata$endpoint_key
+endpoint_order_labels <- pretty_endpoint_label(endpoint_order)
+
 heatmap_dat <- interaction_terms_by_endpoint %>%
-  mutate(
-    variable_label = pretty_var_label(variable),
-    endpoint_label = endpoint_key
-  ) %>%
-  group_by(endpoint_label, variable_label) %>%
+  group_by(endpoint_key, endpoint_label, variable_label) %>%
   summarise(
     estimate = mean(estimate, na.rm = TRUE),
     p.value = mean(p.value, na.rm = TRUE),
     .groups = "drop"
   ) %>%
-  filter(variable_label %in% pretty_var_label(final_selected_vars))
-
-fig_heatmap <- heatmap_dat %>%
+  filter(variable_label %in% pretty_var_label(final_selected_vars)) %>%
   mutate(
+    endpoint_label = factor(endpoint_label, levels = endpoint_order_labels),
     variable_label = factor(variable_label, levels = rev(pretty_var_label(final_selected_vars)))
-  ) %>%
-  ggplot(aes(x = endpoint_label, y = variable_label, fill = estimate)) +
-  geom_tile(color = "white") +
+  )
+
+fig_heatmap <- ggplot(heatmap_dat, aes(x = endpoint_label, y = variable_label, fill = estimate)) +
+  geom_tile(color = "white", linewidth = 0.25) +
   geom_point(
     data = ~ dplyr::filter(.x, p.value < 0.05),
     aes(x = endpoint_label, y = variable_label),
     inherit.aes = FALSE,
-    size = 2.2
+    size = 2.0
   ) +
   labs(
     title = "Heat-vulnerability interaction patterns across endpoints",
@@ -1046,12 +1345,12 @@ fig_heatmap <- heatmap_dat %>%
 ggsave(
   filename = file.path(out_dir, "fig_variable_selection_heatmap.png"),
   plot = fig_heatmap,
-  width = 12,
-  height = 7,
+  width = 14,
+  height = 8,
   dpi = 400
 )
 
-# Figure 4: Correlation heatmap for final selected variables
+# Figure 7: binned correlation heatmap with white midpoint and wider legend
 if (length(final_selected_vars) >= 2) {
   corr_long <- as.data.frame(as.table(cor(
     hvi_model_matrix[, final_selected_vars],
@@ -1061,30 +1360,318 @@ if (length(final_selected_vars) >= 2) {
     rename(var1 = Var1, var2 = Var2, correlation = Freq) %>%
     mutate(
       var1_label = pretty_var_label(var1),
-      var2_label = pretty_var_label(var2)
+      var2_label = pretty_var_label(var2),
+      corr_bin = cut(
+        correlation,
+        breaks = c(-1, -0.8, -0.6, -0.4, -0.2, -0.05, 0.05, 0.2, 0.4, 0.6, 0.8, 1),
+        include.lowest = TRUE
+      )
     )
   
   fig_corr <- ggplot(corr_long, aes(x = var1_label, y = var2_label, fill = correlation)) +
-    geom_tile(color = "white") +
+    geom_tile(color = "white", linewidth = 0.25) +
+    scale_fill_gradient2(
+      low = "#2166AC",
+      mid = "white",
+      high = "#B2182B",
+      midpoint = 0,
+      breaks = c(-1, -0.5, 0, 0.5, 1),
+      limits = c(-1, 1),
+      name = "Correlation"
+    ) +
+    guides(fill = guide_colorbar(
+      barwidth = unit(10, "cm"),
+      barheight = unit(0.6, "cm"),
+      title.position = "top"
+    )) +
     labs(
       title = "Correlation structure of final selected vulnerability variables",
+      subtitle = "Used to prune redundant features before HVI model fitting",
       x = NULL,
-      y = NULL,
-      fill = "Correlation"
+      y = NULL
     ) +
     theme_pub(base_size = 11) +
     theme(
-      axis.text.x = element_text(angle = 45, hjust = 1)
+      axis.text.x = element_text(angle = 45, hjust = 1),
+      legend.position = "bottom"
     )
   
   ggsave(
     filename = file.path(out_dir, "fig_selected_variable_correlation.png"),
     plot = fig_corr,
-    width = 8,
-    height = 7,
+    width = 10,
+    height = 8,
+    dpi = 400
+  )
+  
+  # optional binned version too
+  fig_corr_binned <- ggplot(corr_long, aes(x = var1_label, y = var2_label, fill = corr_bin)) +
+    geom_tile(color = "white", linewidth = 0.25) +
+    scale_fill_brewer(
+      palette = "RdBu",
+      direction = -1,
+      name = "Correlation\nbin"
+    ) +
+    labs(
+      title = "Correlation structure of final selected vulnerability variables",
+      subtitle = "Binned correlations to emphasize broad redundancy structure",
+      x = NULL,
+      y = NULL
+    ) +
+    theme_pub(base_size = 11) +
+    theme(
+      axis.text.x = element_text(angle = 45, hjust = 1),
+      legend.position = "bottom"
+    )
+  
+  ggsave(
+    filename = file.path(out_dir, "fig_selected_variable_correlation_binned.png"),
+    plot = fig_corr_binned,
+    width = 10,
+    height = 8,
     dpi = 400
   )
 }
+
+# Figure 8: RF vs interaction scatter with tight labels
+fig_rf_vs_interaction <- selection_summary %>%
+  mutate(
+    label_flag = variable %in% top_scatter_vars
+  ) %>%
+  ggplot(aes(x = mean_rf_importance, y = mean_abs_beta)) +
+  geom_point(aes(size = overall_score, alpha = label_flag)) +
+  ggrepel::geom_text_repel(
+    data = ~ dplyr::filter(.x, label_flag),
+    aes(label = variable_label),
+    size = 3.4,
+    box.padding = 0.25,
+    point.padding = 0.2,
+    segment.color = "grey60",
+    segment.size = 0.3,
+    max.overlaps = Inf,
+    min.segment.length = 0
+  ) +
+  scale_alpha_manual(values = c(`TRUE` = 1, `FALSE` = 0.45), guide = "none") +
+  labs(
+    title = "Concordance between random forest and interaction-based selection",
+    subtitle = "Variables high on both axes are strong candidates for final HVI inclusion",
+    x = "Mean random forest importance",
+    y = "Mean absolute interaction coefficient",
+    size = "Overall\nscore"
+  ) +
+  theme_pub(base_size = base_size)
+
+ggsave(
+  filename = file.path(out_dir, "fig_rf_vs_interaction_scatter.png"),
+  plot = fig_rf_vs_interaction,
+  width = 10,
+  height = 8,
+  dpi = 400
+)
+
+# -----------------------------
+# FIXED CORRELATION HEATMAPS + CLEANER INTERACTION BAR PLOT
+# -----------------------------
+suppressPackageStartupMessages({
+  library(tidyverse)
+  library(forcats)
+  library(scales)
+})
+
+# --------------------------------------------------
+# 1. CLEAN / RESTRICT VARIABLES FOR PLOTTING
+# --------------------------------------------------
+# drop duplicated unemployment representation
+drop_vars <- c("z_mean_unemployed")
+final_selected_vars <- setdiff(final_selected_vars, drop_vars)
+
+selection_summary_plot <- selection_summary %>%
+  filter(!variable %in% drop_vars) %>%
+  mutate(variable_label = pretty_var_label(variable))
+
+# keep only variables that actually had interaction evidence
+selection_summary_interaction_plot <- selection_summary_plot %>%
+  filter(
+    is.finite(mean_abs_beta),
+    mean_abs_beta > 0,
+    n_endpoints_interaction > 0
+  )
+
+# --------------------------------------------------
+# 2. INTERACTION BAR PLOT
+# --------------------------------------------------
+fig_interaction <- selection_summary_interaction_plot %>%
+  slice_max(order_by = mean_abs_beta, n = plot_top_n) %>%
+  mutate(variable_label = fct_reorder(variable_label, mean_abs_beta)) %>%
+  ggplot(aes(x = mean_abs_beta, y = variable_label)) +
+  geom_col(width = 0.75) +
+  labs(
+    title = "Interaction-based vulnerability selection",
+    subtitle = "Average absolute heat × vulnerability interaction coefficient across endpoints",
+    x = "Mean absolute interaction coefficient",
+    y = NULL
+  ) +
+  theme_pub(base_size = base_size)
+
+ggsave(
+  filename = file.path(out_dir, "fig_interaction_importance_top15.png"),
+  plot = fig_interaction,
+  width = 10,
+  height = 7,
+  dpi = 400
+)
+
+# --------------------------------------------------
+# 3. CORRELATION DATA
+# --------------------------------------------------
+if (length(final_selected_vars) >= 2) {
+  
+  corr_mat <- cor(
+    hvi_model_matrix[, final_selected_vars],
+    use = "pairwise.complete.obs"
+  )
+  
+  # use ONE shared variable order for both axes
+  corr_var_order <- selection_summary_plot %>%
+    filter(variable %in% final_selected_vars) %>%
+    arrange(desc(overall_score)) %>%
+    pull(variable)
+  
+  corr_var_order <- corr_var_order[corr_var_order %in% colnames(corr_mat)]
+  
+  corr_long <- as.data.frame(as.table(corr_mat)) %>%
+    as_tibble() %>%
+    rename(var1 = Var1, var2 = Var2, correlation = Freq) %>%
+    mutate(
+      var1 = factor(var1, levels = corr_var_order),
+      # reverse y-axis order so matrix reads like a standard symmetric heatmap
+      var2 = factor(var2, levels = rev(corr_var_order)),
+      var1_label = pretty_var_label(as.character(var1)),
+      var2_label = pretty_var_label(as.character(var2))
+    )
+  
+  write_csv(as.data.frame(corr_mat), file.path(out_dir, "selected_variable_correlation_matrix.csv"))
+  write_csv(
+    corr_long %>% mutate(var1 = as.character(var1), var2 = as.character(var2)),
+    file.path(out_dir, "selected_variable_correlation_long.csv")
+  )
+  
+  # --------------------------------------------------
+  # 4. CONTINUOUS CORRELATION HEATMAP
+  # Explicit palette: blue = negative, white = zero, red = positive
+  # --------------------------------------------------
+  fig_corr <- ggplot(corr_long, aes(x = var1_label, y = var2_label, fill = correlation)) +
+    geom_tile(color = "white", linewidth = 0.25) +
+    scale_fill_gradient2(
+      low = "#2166AC",
+      mid = "white",
+      high = "#B2182B",
+      midpoint = 0,
+      limits = c(-1, 1),
+      breaks = c(-1, -0.5, 0, 0.5, 1),
+      labels = label_number(accuracy = 0.1),
+      name = "Correlation"
+    ) +
+    guides(
+      fill = guide_colorbar(
+        title.position = "top",
+        barwidth = unit(12, "cm"),
+        barheight = unit(0.7, "cm")
+      )
+    ) +
+    labs(
+      title = "Correlation structure of final selected vulnerability variables",
+      subtitle = "Used to prune redundant features before HVI model fitting",
+      x = NULL,
+      y = NULL
+    ) +
+    theme_pub(base_size = 11) +
+    theme(
+      axis.text.x = element_text(angle = 45, hjust = 1),
+      legend.position = "bottom"
+    )
+  
+  ggsave(
+    filename = file.path(out_dir, "fig_selected_variable_correlation.png"),
+    plot = fig_corr,
+    width = 10,
+    height = 8,
+    dpi = 400
+  )
+  
+  # --------------------------------------------------
+  # 5. BINNED CORRELATION HEATMAP
+  # Explicit ordered bins + manual colors so sign cannot look flipped
+  # --------------------------------------------------
+  corr_long_binned <- corr_long %>%
+    mutate(
+      corr_bin = cut(
+        correlation,
+        breaks = c(-1, -0.8, -0.6, -0.4, -0.2, -0.05, 0.05, 0.2, 0.4, 0.6, 0.8, 1),
+        include.lowest = TRUE,
+        right = TRUE
+      ),
+      corr_bin = factor(
+        corr_bin,
+        levels = c(
+          "[-1,-0.8]", "(-0.8,-0.6]", "(-0.6,-0.4]", "(-0.4,-0.2]",
+          "(-0.2,-0.05]", "(-0.05,0.05]", "(0.05,0.2]", "(0.2,0.4]",
+          "(0.4,0.6]", "(0.6,0.8]", "(0.8,1]"
+        )
+      )
+    )
+  
+  corr_bin_colors <- c(
+    "[-1,-0.8]"    = "#08306B",
+    "(-0.8,-0.6]" = "#2166AC",
+    "(-0.6,-0.4]" = "#4393C3",
+    "(-0.4,-0.2]" = "#92C5DE",
+    "(-0.2,-0.05]"= "#D1E5F0",
+    "(-0.05,0.05]"= "white",
+    "(0.05,0.2]"  = "#FDDBC7",
+    "(0.2,0.4]"   = "#F4A582",
+    "(0.4,0.6]"   = "#D6604D",
+    "(0.6,0.8]"   = "#B2182B",
+    "(0.8,1]"     = "#67001F"
+  )
+  
+  fig_corr_binned <- ggplot(corr_long_binned, aes(x = var1_label, y = var2_label, fill = corr_bin)) +
+    geom_tile(color = "white", linewidth = 0.25) +
+    scale_fill_manual(
+      values = corr_bin_colors,
+      drop = FALSE,
+      name = "Correlation\nbin"
+    ) +
+    guides(
+      fill = guide_legend(
+        title.position = "top",
+        nrow = 2,
+        byrow = TRUE,
+        keywidth = unit(1.2, "cm"),
+        keyheight = unit(0.5, "cm")
+      )
+    ) +
+    labs(
+      title = "Correlation structure of final selected vulnerability variables",
+      subtitle = "Binned correlations to emphasize broad redundancy structure",
+      x = NULL,
+      y = NULL
+    ) +
+    theme_pub(base_size = 11) +
+    theme(
+      axis.text.x = element_text(angle = 45, hjust = 1),
+      legend.position = "bottom"
+    )
+  
+  ggsave(
+    filename = file.path(out_dir, "fig_selected_variable_correlation_binned.png"),
+    plot = fig_corr_binned,
+    width = 11,
+    height = 8.5,
+    dpi = 400
+  )
+}
+
 
 # -----------------------------
 # 8. CONSOLE SUMMARY + SAVE OBJECTS
@@ -1115,3 +1702,4 @@ print(
     select(variable, variable_label, mean_rf_importance, mean_abs_beta, n_endpoints_interaction, overall_score) %>%
     arrange(desc(overall_score))
 )
+

@@ -109,7 +109,7 @@ endpoint_spec <- tribble(
 # vulnerability variables to carry into the model matrix
 candidate_vuln_vars <- c(
   # ACS / demographics
-  "total_pop", "mean_age", "median_age", "mean_black", "mean_hisp", "mean_white",
+  "pop_density_km2", "mean_age", "median_age", "mean_black", "mean_hisp", "mean_white",
   "mean_asian", "mean_income", "median_income", "mean_unemployed", "mean_employed",
   "mean_college", "mean_hs", "mean_male", "mean_female",
   

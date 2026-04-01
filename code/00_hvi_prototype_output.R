@@ -208,17 +208,106 @@ hazard_components <- intersect(
   names(panel_use)
 )
 
-panel_daily <- panel_use %>%
+library(data.table)
+library(dplyr)
+library(readr)
+library(stringr)
+library(lubridate)
+
+std_comm <- function(x) {
+  x %>%
+    as.character() %>%
+    str_trim() %>%
+    str_to_upper()
+}
+
+# ------------------------------------------------------------------
+# Add annual NO2 and PM2.5 to panel_use by community + year
+# ------------------------------------------------------------------
+
+no2_path  <- "C:/Users/Peter Graffy/Box/HVI2.0/Climate/no2_panel_community_year.csv"
+pm25_path <- "C:/Users/Peter Graffy/Box/HVI2.0/Climate/pm25_panel_community_year.csv"
+
+no2_dat <- fread(no2_path) %>%
+  janitor::clean_names()
+
+pm25_dat <- fread(pm25_path) %>%
+  janitor::clean_names()
+
+# standardize expected columns
+no2_dat <- no2_dat %>%
   mutate(
-    heat_index = case_when(
-      "heat_index" %in% names(.) ~ heat_index,
-      all(c("tmax", "humidity") %in% names(.)) ~ tmax + 0.05 * humidity,
-      TRUE ~ NA_real_
-    ),
+    community = std_comm(community),
+    year = as.integer(year)
+  )
+
+pm25_dat <- pm25_dat %>%
+  mutate(
+    community = std_comm(community),
+    year = as.integer(year)
+  )
+
+# if pm2.5 column came in with a different cleaned name, normalize it to pm25
+if (!"pm25" %in% names(pm25_dat)) {
+  pm25_col <- intersect(c("pm2_5", "pm_25", "pm2.5"), names(pm25_dat))
+  if (length(pm25_col) == 0) stop("Could not find PM2.5 column in pm25 file.")
+  pm25_dat <- pm25_dat %>%
+    rename(pm25 = all_of(pm25_col[1]))
+}
+
+# likewise for no2
+if (!"no2" %in% names(no2_dat)) {
+  no2_col <- intersect(c("no2"), names(no2_dat))
+  if (length(no2_col) == 0) stop("Could not find no2 column in no2 file.")
+}
+
+# deduplicate just in case
+no2_dat <- no2_dat %>%
+  distinct(community, year, .keep_all = TRUE) %>%
+  select(community, year, no2)
+
+pm25_dat <- pm25_dat %>%
+  distinct(community, year, .keep_all = TRUE) %>%
+  select(community, year, pm25)
+
+# make sure panel_use has year
+panel_use <- panel_use %>%
+  mutate(
+    community = std_comm(community),
+    event_date = as.Date(event_date),
+    year = year(event_date)
+  ) %>%
+  left_join(no2_dat,  by = c("community", "year")) %>%
+  left_join(pm25_dat, by = c("community", "year"))
+
+# if either column still missing for some reason, create it
+if (!"no2" %in% names(panel_use)) {
+  panel_use <- panel_use %>% mutate(no2 = NA_real_)
+}
+
+if (!"pm25" %in% names(panel_use)) {
+  panel_use <- panel_use %>% mutate(pm25 = NA_real_)
+}
+
+panel_daily <- panel_use
+
+if ("heat_index" %in% names(panel_daily)) {
+  panel_daily <- panel_daily %>%
+    mutate(heat_index = heat_index)
+} else if (all(c("tmax", "humidity") %in% names(panel_daily))) {
+  panel_daily <- panel_daily %>%
+    mutate(heat_index = tmax + 0.05 * humidity)
+} else {
+  panel_daily <- panel_daily %>%
+    mutate(heat_index = NA_real_)
+}
+
+panel_daily <- panel_daily %>%
+  mutate(
     observed_total_events =
-      coalesce(.data[["deaths"]], 0) +
-      coalesce(.data[["ed_visits"]], 0) +
-      coalesce(.data[["ems_calls"]], 0)
+      (if ("deaths" %in% names(panel_daily)) coalesce(deaths, 0) else 0) +
+      (if ("ed_visits" %in% names(panel_daily)) coalesce(ed_visits, 0) else 0) +
+      (if ("ems_calls" %in% names(panel_daily)) coalesce(ems_calls, 0) else 0)
   )
 
 # day-level hazard score
@@ -387,17 +476,33 @@ if (!exists("mrt_table")) {
 } else {
   mrt_use <- get("mrt_table")
   
+  lag_col <- intersect(c("lag", "peak_lag_days", "lag_days"), names(mrt_use))
+  mrt_col <- intersect(c("mrt", "reference_value"), names(mrt_use))
+  outcome_col <- intersect(c("outcome", "outcome_label"), names(mrt_use))
+  
+  if (length(mrt_col) == 0) stop("`mrt_table` does not contain an MRT column.")
+  if (length(outcome_col) == 0) stop("`mrt_table` does not contain an outcome column.")
+  
+  lag_vals <- if (length(lag_col) > 0) mrt_use[[lag_col[1]]] else NA_integer_
+  
   thresholds <- community_lookup %>%
     crossing(mrt_use) %>%
+    mutate(
+      .lag_val = lag_vals
+    ) %>%
     transmute(
       community_area_id,
-      outcome = outcome,
+      outcome = .data[[outcome_col[1]]],
       exposure_metric = "tmax",
-      reference_value = mrt,
-      alert_threshold = mrt + 3,
-      severe_threshold = mrt + 6,
-      lag_structure = paste0("0-", lag, " days"),
-      peak_lag_days = lag,
+      reference_value = .data[[mrt_col[1]]],
+      alert_threshold = .data[[mrt_col[1]]] + 3,
+      severe_threshold = .data[[mrt_col[1]]] + 6,
+      lag_structure = ifelse(
+        is.na(.lag_val),
+        NA_character_,
+        paste0("0-", .lag_val, " days")
+      ),
+      peak_lag_days = as.integer(.lag_val),
       threshold_definition = "Prototype frontend threshold derived from citywide MRT + fixed offsets",
       model_version = "mrt_warmseason_frontend_v1"
     )
@@ -447,21 +552,35 @@ if (!exists("curve_table")) {
 # --------------------------------------------------------------------------------------
 timeseries <- panel_daily %>%
   left_join(
-    daily_risk_scores %>% select(date, community_area_id, overall_risk_score_0_100, risk_tier),
+    daily_risk_scores %>%
+      select(date, community_area_id, overall_risk_score_0_100, risk_tier) %>%
+      rename(
+        risk_score_join = overall_risk_score_0_100,
+        risk_tier_join = risk_tier
+      ),
     by = c("event_date" = "date", "community_area_id")
+  ) %>%
+  mutate(
+    pm25_out = if ("pm25" %in% names(.)) pm25 else NA_real_,
+    no2_out = if ("no2" %in% names(.)) no2 else NA_real_,
+    tmax_out = if ("tmax" %in% names(.)) tmax else NA_real_,
+    tmin_out = if ("tmin" %in% names(.)) tmin else NA_real_,
+    tmean_out = if ("tmean" %in% names(.)) tmean else NA_real_,
+    heat_index_out = if ("heat_index" %in% names(.)) heat_index else NA_real_,
+    humidity_out = if ("humidity" %in% names(.)) humidity else NA_real_
   ) %>%
   transmute(
     date = event_date,
     community_area_id,
-    tmax = .data[["tmax"]] %||% NA_real_,
-    tmin = .data[["tmin"]] %||% NA_real_,
-    tmean = .data[["tmean"]] %||% NA_real_,
-    heat_index = .data[["heat_index"]] %||% NA_real_,
-    humidity = .data[["humidity"]] %||% NA_real_,
-    pm25 = .data[["pm25"]] %||% NA_real_,
-    no2 = .data[["no2"]] %||% NA_real_,
-    risk_score = round(overall_risk_score_0_100, 2),
-    risk_tier,
+    tmax = tmax_out,
+    tmin = tmin_out,
+    tmean = tmean_out,
+    heat_index = heat_index_out,
+    humidity = humidity_out,
+    pm25 = pm25_out,
+    no2 = no2_out,
+    risk_score = round(risk_score_join, 2),
+    risk_tier = risk_tier_join,
     expected_excess_events_total = round(
       coalesce(mort_excess_per_hot_day, 0) +
         coalesce(ed_excess_per_hot_day, 0) +

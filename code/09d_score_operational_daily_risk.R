@@ -48,29 +48,107 @@ endpoint_weights <- get(weights_obj, envir = .GlobalEnv)
 # -----------------------------
 endpoint_daily_list <- list()
 
+hvi_model_matrix <- hvi_model_matrix %>%
+  mutate(
+    year = recode(as.character(year),
+                  "1" = "2019",
+                  "2" = "2020",
+                  "3" = "2021",
+                  "4" = "2022")
+  )
+
+score_df <- score_df %>%
+  mutate(
+    year = recode(as.character(year),
+                  "1" = "2019",
+                  "2" = "2020",
+                  "3" = "2021",
+                  "4" = "2022"),
+    year = factor(year, levels = fit$xlevels[["year"]]),
+    dow = factor(as.character(dow), levels = fit$xlevels[["dow"]])
+  )
+
 for (ep_key in names(endpoint_models)) {
+  message("Scoring endpoint: ", ep_key)
+  
   fit <- endpoint_models[[ep_key]]
   meta_row <- hvi_endpoint_metadata %>% filter(endpoint_key == ep_key)
-  if (nrow(meta_row) == 0) next
-
+  if (nrow(meta_row) == 0) {
+    message("  skipped: no metadata match")
+    next
+  }
+  
   outcome_var <- meta_row$panel_outcome_col[1]
   heat_var <- get_heat_var(ep_key, hvi_model_matrix)
-  if (length(heat_var) == 0 || is.na(heat_var)) next
-
+  if (length(heat_var) == 0 || is.na(heat_var)) {
+    message("  skipped: no heat var")
+    next
+  }
+  
   all_model_vars <- all.vars(formula(fit))
-  z_vars_use <- all_model_vars[str_detect(all_model_vars, "^z_")]
-
+  z_vars_use <- all_model_vars[stringr::str_detect(all_model_vars, "^z_")]
+  
   score_df <- hvi_model_matrix %>%
-    select(community, date, year, doy, dow, pop_offset, any_of(outcome_var), all_of(heat_var), any_of(z_vars_use)) %>%
-    rename(outcome = any_of(outcome_var), heat_dose = all_of(heat_var)) %>%
-    drop_na(heat_dose, doy, dow, year)
-
-  if (nrow(score_df) == 0) next
-
-  ref_df <- score_df %>% mutate(heat_dose = 0)
-  score_df$predicted_count <- as.numeric(predict(fit, newdata = score_df, type = "response"))
-  ref_df$reference_count   <- as.numeric(predict(fit, newdata = ref_df, type = "response"))
-
+    select(
+      community, date, year, doy, dow, pop_offset,
+      any_of(outcome_var), all_of(heat_var), any_of(z_vars_use)
+    ) %>%
+    rename(
+      outcome = any_of(outcome_var),
+      heat_dose = all_of(heat_var)
+    ) %>%
+    tidyr::drop_na(heat_dose, doy, dow, year)
+  
+  message("  rows after initial build: ", nrow(score_df))
+  if (nrow(score_df) == 0) {
+    message("  skipped: score_df empty")
+    next
+  }
+  
+  score_df <- score_df %>%
+    mutate(
+      community = as.character(community),
+      date = as.Date(date),
+      doy = as.integer(doy)
+    )
+  
+  if (!is.null(fit$xlevels) && "dow" %in% names(fit$xlevels)) {
+    score_df <- score_df %>%
+      mutate(dow = factor(as.character(dow), levels = fit$xlevels[["dow"]]))
+  } else {
+    score_df <- score_df %>%
+      mutate(dow = factor(as.character(dow)))
+  }
+  
+  if (!is.null(fit$xlevels) && "year" %in% names(fit$xlevels)) {
+    score_df <- score_df %>%
+      mutate(year = factor(as.character(year), levels = fit$xlevels[["year"]]))
+  } else {
+    score_df <- score_df %>%
+      mutate(year = factor(as.character(year)))
+  }
+  
+  vars_needed_for_pred <- intersect(all_model_vars, names(score_df))
+  score_df <- score_df %>%
+    tidyr::drop_na(dplyr::any_of(vars_needed_for_pred)) %>%
+    as.data.frame()
+  
+  message("  rows after harmonization: ", nrow(score_df))
+  if (nrow(score_df) == 0) {
+    message("  skipped: no rows after harmonization")
+    next
+  }
+  
+  ref_df <- score_df
+  ref_df$heat_dose <- 0
+  
+  score_df$predicted_count <- as.numeric(
+    predict(fit, newdata = score_df, type = "response")
+  )
+  ref_df$reference_count <- as.numeric(
+    predict(fit, newdata = ref_df, type = "response")
+  )
+  
   ep_daily <- score_df %>%
     mutate(
       endpoint_key = ep_key,
@@ -82,11 +160,15 @@ for (ep_key in names(endpoint_models)) {
       excess_events = predicted_count - reference_count,
       relative_risk = ifelse(reference_count > 0, predicted_count / reference_count, NA_real_)
     ) %>%
-    select(community, date, year, endpoint_key, outcome_label, source, domain,
-           observed_count, predicted_count, reference_count, excess_events, relative_risk)
-
+    select(
+      community, date, year, endpoint_key, outcome_label, source, domain,
+      observed_count, predicted_count, reference_count, excess_events, relative_risk
+    )
+  
+  message("  final rows written: ", nrow(ep_daily))
   endpoint_daily_list[[ep_key]] <- ep_daily
 }
+
 
 ca_day_endpoint_risk <- bind_rows(endpoint_daily_list) %>%
   group_by(endpoint_key) %>%

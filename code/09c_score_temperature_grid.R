@@ -180,4 +180,12 @@ assign("temp_grid_family_risk", family_grid, envir = .GlobalEnv)
 assign("temp_grid_overall_risk", overall_grid, envir = .GlobalEnv)
 assign("query_temperature_outputs", query_temperature_outputs, envir = .GlobalEnv)
 
+assign("temperature_grid_endpoint_risk", temp_grid_endpoint_risk, envir = .GlobalEnv)
+assign("temperature_grid_family_risk", family_grid, envir = .GlobalEnv)
+assign("temperature_grid_overall_risk", overall_grid, envir = .GlobalEnv)
+
+write_csv(temp_grid_endpoint_risk, file.path(out_dir, "09c_temperature_grid_endpoint_risk.csv"))
+write_csv(family_grid, file.path(out_dir, "09c_temperature_grid_family_risk.csv"))
+write_csv(overall_grid, file.path(out_dir, "09c_temperature_grid_overall_risk.csv"))
+
 message("09c complete. Outputs written to: ", out_dir)

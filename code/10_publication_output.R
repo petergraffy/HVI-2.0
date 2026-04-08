@@ -817,7 +817,7 @@ if (have_temp_endpoint) {
       group_by(community) %>%
       summarise(total_risk = sum(.data[[risk_col]], na.rm = TRUE), .groups = "drop") %>%
       arrange(desc(total_risk)) %>%
-      slice_head(n = 20) %>%
+      slice_head(n = 77) %>%
       select(community)
     
     heatmap_plot_dat <- temp_ep %>%
@@ -1061,15 +1061,622 @@ if (have_temp_overall) {
 
 
 
-head(sort(unique(chi_sf$community)), 20)
-head(sort(unique(structural_overall$community)), 20)
-head(sort(unique(temp_overall$community)), 20)
+# ======================================================================================
+# TABLE 1: Community characteristics and outcome burden
+# ======================================================================================
+
+library(dplyr)
+library(gt)
+
+# ---------------------------
+# 1. Structural variables
+# ---------------------------
+
+# structural variables only
+struct_vars <- names(hvi_model_matrix) %>%
+  stringr::str_subset("^z_")
+
+struct_summary <- hvi_model_matrix %>%
+  select(community, all_of(struct_vars)) %>%
+  distinct() %>%
+  summarise(
+    across(
+      all_of(struct_vars),
+      list(
+        mean = ~mean(.x, na.rm = TRUE),
+        sd   = ~sd(.x, na.rm = TRUE),
+        min  = ~min(.x, na.rm = TRUE),
+        max  = ~max(.x, na.rm = TRUE)
+      ),
+      .names = "{.col}_{.fn}"
+    )
+  ) %>%
+  tidyr::pivot_longer(
+    everything(),
+    names_to = c("variable", "stat"),
+    names_sep = "_(?=[^_]+$)"
+  ) %>%
+  tidyr::pivot_wider(names_from = stat, values_from = value) %>%
+  mutate(
+    variable_label = unname(var_label_dict[variable])
+  ) %>%
+  select(variable, variable_label, mean, sd, min, max)
+
+# Add labels
+struct_summary <- struct_summary %>%
+  mutate(
+    variable_label = var_label_dict[variable] %>% as.character()
+  ) %>%
+  select(variable, variable_label, mean, sd, min, max)
+
+# ---------------------------
+# 2. Outcome summaries
+# ---------------------------
+
+outcome_vars <- names(hvi_model_matrix) %>%
+  stringr::str_subset("^(death|ed_|ems_)")
+
+outcome_summary <- hvi_model_matrix %>%
+  select(community, date, all_of(outcome_vars)) %>%
+  summarise(across(
+    all_of(outcome_vars),
+    list(
+      total = ~sum(.x, na.rm = TRUE),
+      mean_daily = ~mean(.x, na.rm = TRUE)
+    ),
+    .names = "{.col}_{.fn}"
+  )) %>%
+  tidyr::pivot_longer(
+    everything(),
+    names_to = c("endpoint", "stat"),
+    names_sep = "_(?=[^_]+$)"
+  ) %>%
+  tidyr::pivot_wider(names_from = stat, values_from = value)
+
+# ---------------------------
+# 3. Population / time frame
+# ---------------------------
+
+n_communities <- dplyr::n_distinct(hvi_model_matrix$community)
+n_days        <- dplyr::n_distinct(hvi_model_matrix$date)
+date_range    <- range(hvi_model_matrix$date, na.rm = TRUE)
+
+# ---------------------------
+# 4. Save outputs
+# ---------------------------
+
+write.csv(struct_summary, "table1_structural_characteristics.csv", row.names = FALSE)
+write.csv(outcome_summary, "table1_outcomes_summary.csv", row.names = FALSE)
+
+# ---------------------------
+# 5. Publication-style table (structural)
+# ---------------------------
+
+table1_gt <- struct_summary %>%
+  mutate(across(c(mean, sd, min, max), ~round(.x, 2))) %>%
+  gt() %>%
+  cols_label(
+    variable_label = "Variable",
+    mean = "Mean",
+    sd = "SD",
+    min = "Min",
+    max = "Max"
+  ) %>%
+  tab_header(
+    title = md("**Table 1. Community-level structural characteristics**"),
+    subtitle = glue::glue("{n_communities} community areas; study period {date_range[1]} to {date_range[2]}")
+  )
+
+gtsave(table1_gt, "table1_structural.html")
 
 
 
 
+# ======================================================================================
+# RESULTS PARAGRAPH METRICS
+# ======================================================================================
+
+total_population <- hvi_model_matrix %>%
+  group_by(community) %>%
+  summarise(pop = mean(pop_offset, na.rm = TRUE)) %>%
+  summarise(total = sum(pop, na.rm = TRUE)) %>%
+  pull(total)
+
+total_events <- hvi_model_matrix %>%
+  summarise(across(starts_with(c("death", "ed_", "ems_")), ~sum(.x, na.rm = TRUE))) %>%
+  pivot_longer(everything()) %>%
+  summarise(total = sum(value)) %>%
+  pull(total)
+
+total_deaths <- hvi_model_matrix %>%
+  summarise(across(starts_with("death"), ~sum(.x, na.rm = TRUE))) %>%
+  rowSums()
+
+total_ed <- hvi_model_matrix %>%
+  summarise(across(starts_with("ed_"), ~sum(.x, na.rm = TRUE))) %>%
+  rowSums()
+
+total_ems <- hvi_model_matrix %>%
+  summarise(across(starts_with("ems_"), ~sum(.x, na.rm = TRUE))) %>%
+  rowSums()
 
 
 
+library(dplyr)
+library(tidyr)
+library(stringr)
+library(gt)
+library(scales)
+
+# ------------------------------------------------------------------------------
+# TABLE 1: Source-level panel characteristics
+# ------------------------------------------------------------------------------
+
+# Primary all-cause source variables
+source_defs <- tibble::tribble(
+  ~source,      ~outcome_var,
+  "ED",         "ed_visits",
+  "EMS",        "ems_calls",
+  "Mortality",  "deaths"
+)
+
+# Community-level characteristics to show
+table1_vars <- c(
+  "total_pop",
+  "median_age",
+  "mean_black",
+  "mean_hisp",
+  "median_income",
+  "ac_prob",
+  "ndvi",
+  "pm25",
+  "no2",
+  "svi_rpl_themes"
+)
+
+# Match to actual column names in hvi_model_matrix
+find_col <- function(x) {
+  candidates <- c(x, paste0("z_", x))
+  hit <- candidates[candidates %in% names(hvi_model_matrix)][1]
+  if (is.na(hit)) NA_character_ else hit
+}
+
+table1_var_map <- tibble(
+  display = c(
+    "Median population",
+    "Median age",
+    "% Black",
+    "% Hispanic",
+    "Median income",
+    "Air conditioning prevalence",
+    "NDVI",
+    "PM2.5",
+    "NO2",
+    "SVI overall"
+  ),
+  raw = table1_vars,
+  col = vapply(table1_vars, find_col, character(1))
+) %>%
+  filter(!is.na(col))
+
+# helper to back-transform z-scores if both raw and z_ do not exist
+# if only z_ exists, we will still summarize it, but label clearly
+pretty_value <- function(x, digits = 2) {
+  if (all(is.na(x))) return(NA_character_)
+  sprintf(paste0("%.", digits, "f"), median(x, na.rm = TRUE))
+}
+
+summarize_source_panel <- function(source_name, outcome_var, dat) {
+  if (!outcome_var %in% names(dat)) {
+    return(NULL)
+  }
+  
+  df <- dat %>%
+    filter(!is.na(.data[[outcome_var]]))
+  
+  if (nrow(df) == 0) return(NULL)
+  
+  # basic panel stats
+  out <- tibble(
+    characteristic = c(
+      "Community areas, n",
+      "Study days, n",
+      "Community-days, n",
+      "Total events, n",
+      "Mean daily events per community-day",
+      "Median daily events per community-day"
+    ),
+    value = c(
+      n_distinct(df$community),
+      n_distinct(df$date),
+      nrow(df),
+      sum(df[[outcome_var]], na.rm = TRUE),
+      mean(df[[outcome_var]], na.rm = TRUE),
+      median(df[[outcome_var]], na.rm = TRUE)
+    )
+  )
+  
+  # community characteristic rows
+  char_rows <- purrr::map_dfr(seq_len(nrow(table1_var_map)), function(i) {
+    col_i <- table1_var_map$col[i]
+    disp_i <- table1_var_map$display[i]
+    
+    tibble(
+      characteristic = disp_i,
+      value = median(df[[col_i]], na.rm = TRUE)
+    )
+  })
+  
+  bind_rows(out, char_rows) %>%
+    mutate(source = source_name)
+}
+
+table1_long <- purrr::map2_dfr(
+  source_defs$source,
+  source_defs$outcome_var,
+  ~ summarize_source_panel(.x, .y, hvi_model_matrix)
+)
+
+table1_wide <- table1_long %>%
+  select(source, characteristic, value) %>%
+  pivot_wider(names_from = source, values_from = value)
+
+# Format rows differently
+count_rows <- c(
+  "Community areas, n",
+  "Study days, n",
+  "Community-days, n",
+  "Total events, n"
+)
+
+table1_display <- table1_wide %>%
+  mutate(
+    ED = ifelse(characteristic %in% count_rows, comma(round(ED)), sprintf("%.2f", ED)),
+    EMS = ifelse(characteristic %in% count_rows, comma(round(EMS)), sprintf("%.2f", EMS)),
+    Mortality = ifelse(characteristic %in% count_rows, comma(round(Mortality)), sprintf("%.2f", Mortality))
+  )
+
+write.csv(table1_display, "table1_source_panels.csv", row.names = FALSE)
+
+table1_gt <- table1_display %>%
+  gt(rowname_col = "characteristic") %>%
+  tab_header(
+    title = md("**Table 1. Source-specific analytic panel characteristics**"),
+    subtitle = "Community-day panels for emergency department visits, EMS calls, and mortality"
+  ) %>%
+  cols_label(
+    ED = "ED",
+    EMS = "EMS",
+    Mortality = "Mortality"
+  )
+
+gtsave(table1_gt, "table1_source_panels.html")
 
 
+
+clean_label <- function(x) {
+  
+  x <- as.character(x)
+  
+  case_when(
+    
+    # -----------------------------
+    # SVI THEMES
+    # -----------------------------
+    x == "svi_rpl_theme1" ~ "Socioeconomic vulnerability (SVI)",
+    x == "svi_rpl_theme2" ~ "Household composition & disability (SVI)",
+    x == "svi_rpl_theme3" ~ "Minority status & language (SVI)",
+    x == "svi_rpl_theme4" ~ "Housing & transportation (SVI)",
+    x == "svi_rpl_themes" ~ "Overall social vulnerability index",
+    
+    # -----------------------------
+    # SVI COMPONENTS
+    # -----------------------------
+    x == "svi_ep_pov" ~ "Population below poverty level",
+    x == "svi_ep_unemp" ~ "Unemployment rate",
+    x == "svi_ep_nohsdp" ~ "No high school diploma",
+    x == "svi_ep_age65" ~ "Population aged ≥65 years",
+    x == "svi_ep_age17" ~ "Population aged <18 years",
+    x == "svi_ep_disabl" ~ "Population with disability",
+    x == "svi_ep_sngpnt" ~ "Single-parent households",
+    x == "svi_ep_limeng" ~ "Limited English proficiency",
+    x == "svi_ep_minrty" ~ "Minority population",
+    x == "svi_ep_munit" ~ "Multi-unit housing",
+    x == "svi_ep_mobile" ~ "Mobile homes",
+    x == "svi_ep_crowd" ~ "Crowded housing",
+    x == "svi_ep_noveh" ~ "No vehicle access",
+    x == "svi_ep_groupq" ~ "Group quarters population",
+    x == "svi_ep_uninsur" ~ "Uninsured population",
+    x == "svi_ep_noint" ~ "No internet access",
+    x == "svi_ep_hburd" ~ "Housing cost burden",
+    
+    # -----------------------------
+    # OTHER VARIABLES
+    # -----------------------------
+    x == "ac_prob" ~ "Air conditioning prevalence",
+    x == "ndvi" ~ "Greenness (NDVI)",
+    x == "mean_ndvi" ~ "Greenness (NDVI)",
+    x == "pm25" ~ "PM2.5",
+    x == "no2" ~ "NO2",
+    x == "pop_density_km2" ~ "Population density (per km²)",
+    x == "median_age" ~ "Median age",
+    x == "mean_age" ~ "Mean age",
+    x == "mean_black" ~ "Black population (%)",
+    x == "mean_hisp" ~ "Hispanic population (%)",
+    x == "mean_white" ~ "White population (%)",
+    x == "mean_asian" ~ "Asian population (%)",
+    x == "median_income" ~ "Median household income",
+    x == "mean_income" ~ "Mean income",
+    x == "mean_unemployed" ~ "Unemployment rate",
+    x == "mean_employed" ~ "Employment rate",
+    x == "mean_college" ~ "College education (%)",
+    x == "mean_hs" ~ "High school education (%)",
+    x == "mean_male" ~ "Male population (%)",
+    x == "mean_female" ~ "Female population (%)",
+    
+    TRUE ~ x
+  )
+}
+
+
+# final selected variables
+final_vars <- selected_variables_final$variable
+
+# keep only structural (z_) variables
+struct_vars_z <- final_vars[str_detect(final_vars, "^z_")]
+
+# map to unscaled names
+struct_vars_raw <- str_remove(struct_vars_z, "^z_")
+
+# find actual columns available (prefer raw, fallback to z_)
+get_best_var <- function(v) {
+  if (v %in% names(hvi_model_matrix)) return(v)
+  z_v <- paste0("z_", v)
+  if (z_v %in% names(hvi_model_matrix)) return(z_v)
+  return(NA_character_)
+}
+
+struct_vars_use <- unique(na.omit(vapply(struct_vars_raw, get_best_var, character(1))))
+
+total_counts <- tibble(
+  section = "Total counts",
+  row = c("Community areas", "Study days", "Community-days"),
+  value = c(
+    n_distinct(hvi_model_matrix$community),
+    n_distinct(hvi_model_matrix$date),
+    nrow(hvi_model_matrix)
+  )
+)
+
+source_counts <- tibble(
+  section = "Total events by source",
+  row = c("ED visits", "EMS calls", "Deaths"),
+  value = c(
+    sum(hvi_model_matrix$ed_visits, na.rm = TRUE),
+    sum(hvi_model_matrix$ems_calls, na.rm = TRUE),
+    sum(hvi_model_matrix$deaths, na.rm = TRUE)
+  )
+)
+
+
+endpoint_counts <- ca_day_endpoint_risk %>%
+  group_by(endpoint_key) %>%
+  summarise(
+    total_events = sum(observed_count, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  left_join(
+    ep_meta %>% select(endpoint_key, outcome_label, source),
+    by = "endpoint_key"
+  ) %>%
+  mutate(
+    row = paste0(outcome_label, " (", source, ")"),
+    section = "Events by endpoint",
+    value = total_events
+  ) %>%
+  select(section, row, value)
+
+struct_summary <- hvi_model_matrix %>%
+  select(community, all_of(struct_vars_use)) %>%
+  distinct() %>%
+  summarise(
+    across(
+      -community,
+      list(
+        mean = ~mean(.x, na.rm = TRUE),
+        sd   = ~sd(.x, na.rm = TRUE),
+        p25  = ~quantile(.x, 0.25, na.rm = TRUE),
+        median = ~median(.x, na.rm = TRUE),
+        p75  = ~quantile(.x, 0.75, na.rm = TRUE)
+      ),
+      .names = "{.col}_{.fn}"
+    )
+  ) %>%
+  pivot_longer(
+    everything(),
+    names_to = c("variable", "stat"),
+    names_sep = "_(?=[^_]+$)"
+  ) %>%
+  pivot_wider(names_from = stat, values_from = value) %>%
+  mutate(
+    section = "Structural covariates",
+    row = variable,
+    value = sprintf(
+      "%.2f (%.2f–%.2f)",
+      median, p25, p75
+    )
+  ) %>%
+  select(section, row, value)
+
+
+total_counts <- total_counts %>%
+  mutate(value = as.character(value))
+
+source_counts <- source_counts %>%
+  mutate(value = as.character(value))
+
+endpoint_counts <- endpoint_counts %>%
+  mutate(value = as.character(value))
+
+struct_summary <- struct_summary %>%
+  mutate(value = as.character(value))
+
+table1_final <- bind_rows(
+  total_counts,
+  source_counts,
+  endpoint_counts,
+  struct_summary
+)
+
+table1_final <- table1_final %>%
+  mutate(
+    row = ifelse(row %in% names(var_label_dict),
+                 var_label_dict[row],
+                 row)
+  )
+
+table1_final <- table1_final %>%
+  mutate(
+    row = clean_label(row)
+  )
+
+write.csv(table1_final, "table1_full.csv", row.names = FALSE)
+
+library(gt)
+
+table1_gt <- table1_final %>%
+  gt(groupname_col = "section") %>%
+  tab_header(
+    title = md("**Table 1. Study population, endpoint burden, and structural characteristics**")
+  ) %>%
+  cols_label(
+    row = "Characteristic",
+    value = "Value"
+  )
+
+gtsave(table1_gt, "table1_full.html")
+
+library(dplyr)
+library(lubridate)
+library(tidyr)
+
+# -------------------------------------------------------
+# Helper: filter to analytic period
+# -------------------------------------------------------
+filter_warm_season <- function(df, date_col = "event_date") {
+  
+  df %>%
+    mutate(date_tmp = as.Date(.data[[date_col]])) %>%
+    filter(
+      year(date_tmp) %in% 2019:2022,
+      month(date_tmp) %in% 5:9
+    ) %>%
+    select(-date_tmp)
+}
+
+# Apply to DLNM input datasets
+city_ed_filt     <- filter_warm_season(city_ed_full)
+city_ems_filt    <- filter_warm_season(city_ems_full)
+city_deaths_filt <- filter_warm_season(city_deaths_full)
+
+# -------------------------------------------------------
+# Endpoint lists (same as before)
+# -------------------------------------------------------
+ed_endpoints <- c(
+  "ed_visits", "ed_cvd", "ed_dehydration", "ed_injury",
+  "ed_renal", "ed_respiratory", "ed_syncope",
+  "ed_mental", "ed_neuro", "ed_gi"
+)
+
+ems_endpoints <- c(
+  "ems_calls", "ems_bleeding", "ems_cvd", "ems_gi",
+  "ems_injury", "ems_mental", "ems_neuro",
+  "ems_respiratory", "ems_syncope"
+)
+
+death_endpoints <- c(
+  "deaths", "death_cvd", "death_injury", "death_mental",
+  "death_renal", "death_respiratory",
+  "death_neuro", "death_gi"
+)
+
+# -------------------------------------------------------
+# Count helper
+# -------------------------------------------------------
+count_endpoints <- function(df, endpoints, source_name) {
+  
+  endpoints <- endpoints[endpoints %in% names(df)]
+  
+  df %>%
+    summarise(across(
+      all_of(endpoints),
+      ~sum(.x, na.rm = TRUE)
+    )) %>%
+    pivot_longer(
+      everything(),
+      names_to = "endpoint_key",
+      values_to = "total_events"
+    ) %>%
+    mutate(source = source_name)
+}
+
+# -------------------------------------------------------
+# Compute counts (FILTERED DATA)
+# -------------------------------------------------------
+ed_counts    <- count_endpoints(city_ed_filt, ed_endpoints, "ED")
+ems_counts   <- count_endpoints(city_ems_filt, ems_endpoints, "EMS")
+death_counts <- count_endpoints(city_deaths_filt, death_endpoints, "Mortality")
+
+endpoint_counts_raw <- bind_rows(ed_counts, ems_counts, death_counts)
+
+endpoint_label_map <- c(
+  
+  # ED
+  ed_visits       = "All-cause ED visits",
+  ed_cvd          = "Cardiovascular ED visits",
+  ed_dehydration  = "Dehydration ED visits",
+  ed_injury       = "Injury-related ED visits",
+  ed_renal        = "Renal ED visits",
+  ed_respiratory  = "Respiratory ED visits",
+  ed_syncope      = "Syncope ED visits",
+  ed_mental       = "Mental health ED visits",
+  ed_neuro        = "Neurologic ED visits",
+  ed_gi           = "Gastrointestinal ED visits",
+  
+  # EMS
+  ems_calls       = "All-cause EMS encounters",
+  ems_bleeding    = "Bleeding EMS encounters",
+  ems_cvd         = "Cardiovascular EMS encounters",
+  ems_gi          = "Gastrointestinal EMS encounters",
+  ems_injury      = "Injury-related EMS encounters",
+  ems_mental      = "Mental health EMS encounters",
+  ems_neuro       = "Neurologic EMS encounters",
+  ems_respiratory = "Respiratory EMS encounters",
+  ems_syncope     = "Syncope EMS encounters",
+  
+  # Mortality
+  deaths             = "All-cause mortality",
+  death_cvd          = "Cardiovascular mortality",
+  death_injury       = "Injury-related mortality",
+  death_mental       = "Mental health–related mortality",
+  death_renal        = "Renal mortality",
+  death_respiratory  = "Respiratory mortality",
+  death_neuro        = "Neurologic mortality",
+  death_gi           = "Gastrointestinal mortality"
+)
+
+endpoint_counts_clean <- endpoint_counts_raw %>%
+  mutate(
+    row = endpoint_label_map[endpoint_key],
+    section = case_when(
+      source == "ED" ~ "Health events by endpoint — ED",
+      source == "EMS" ~ "Health events by endpoint — EMS",
+      source == "Mortality" ~ "Health events by endpoint — Mortality"
+    ),
+    value = scales::comma(total_events)
+  ) %>%
+  arrange(section, desc(total_events)) %>%
+  select(section, row, value)
+
+
+sum(city_ed_filt$ed_neurologic)

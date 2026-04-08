@@ -30,6 +30,23 @@ dir.create("figures", showWarnings = FALSE, recursive = TRUE)
 # Helpers
 # -------------------------------------------------------------------------------------
 
+# -----------------------------
+# SHARED STUDY WINDOW CONFIG
+# -----------------------------
+analysis_year_start <- 2019L
+analysis_year_end   <- 2022L
+analysis_month_start <- 5L
+analysis_month_end   <- 9L
+
+in_analysis_window <- function(date) {
+  yr <- lubridate::year(date)
+  mo <- lubridate::month(date)
+  yr >= analysis_year_start &
+    yr <= analysis_year_end &
+    mo >= analysis_month_start &
+    mo <= analysis_month_end
+}
+
 standardize_community <- function(x) {
   x <- as.character(x)
   x <- str_squish(x)
@@ -197,7 +214,7 @@ plot_heat_contrast <- ggplot(plot_heat_contrast_dat, aes(x = heat_group, y = mea
   geom_col(position = "dodge") +
   labs(
     title = "Average Warm-Season Daily Counts on Extreme vs Non-Extreme Heat Days",
-    subtitle = "April-October, 2019-2022",
+    subtitle = "May-September, 2019-2022",
     x = NULL,
     y = "Mean daily count",
     fill = NULL

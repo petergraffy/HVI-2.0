@@ -6,22 +6,27 @@
 # ASSUMES THESE OBJECTS ARE ALREADY IN MEMORY:
 #   - hvi_model_matrix
 #   - hvi_endpoint_metadata
-#   - selected_variables_final   [preferred]
-#   - final_selected_vulnerability_vars [optional fallback]
+#
+# Preferred selected-variable sources:
+#   - selected_variables_final
+#   - final_selected_vulnerability_vars
+#   - saved artifacts from 08_variable_selection_hvi.R in:
+#       {project_dir}/variable_selection/
 # ================================================================================================
-
-source("09_utils_hvi.R")
 
 # -----------------------------
 # CONFIG
 # -----------------------------
-project_dir <- getwd()
+project_dir <- "C:/Users/Peter Graffy/Box/HVI2.0"
+code_dir <- file.path(project_dir, "code")
+
+
 out_dir <- ensure_output_dir(project_dir, "09_model_outputs")
 
 model_matrix_obj  <- "hvi_model_matrix"
 endpoint_meta_obj <- "hvi_endpoint_metadata"
 
-family_choice <- "nb"              # "nb" or "quasipoisson"
+family_choice <- "quasipoisson"   # "nb" or "quasipoisson"
 k_folds_spatial <- 5
 seed <- 20260402
 min_total_events <- 50
@@ -35,8 +40,12 @@ save_model_rds      <- TRUE
 # -----------------------------
 # LOAD OBJECTS
 # -----------------------------
-if (!exists(model_matrix_obj, envir = .GlobalEnv)) stop("Object not found: ", model_matrix_obj)
-if (!exists(endpoint_meta_obj, envir = .GlobalEnv)) stop("Object not found: ", endpoint_meta_obj)
+if (!exists(model_matrix_obj, envir = .GlobalEnv)) {
+  stop("Object not found: ", model_matrix_obj)
+}
+if (!exists(endpoint_meta_obj, envir = .GlobalEnv)) {
+  stop("Object not found: ", endpoint_meta_obj)
+}
 
 hvi_model_matrix <- get(model_matrix_obj, envir = .GlobalEnv) %>%
   clean_names() %>%
@@ -52,14 +61,30 @@ hvi_model_matrix <- get(model_matrix_obj, envir = .GlobalEnv) %>%
 hvi_endpoint_metadata <- get(endpoint_meta_obj, envir = .GlobalEnv) %>%
   clean_names()
 
-global_selected_vars <- infer_global_selected_vars(hvi_model_matrix)
-if (length(global_selected_vars) == 0) stop("No selected vulnerability variables were identified.")
+if (!"community" %in% names(hvi_model_matrix)) {
+  stop("hvi_model_matrix is missing community column.")
+}
 
-fold_tbl <- make_group_folds(hvi_model_matrix$community, k = k_folds_spatial, seed = seed)
-hvi_model_matrix <- hvi_model_matrix %>% left_join(fold_tbl, by = "community")
+global_selected_vars <- infer_global_selected_vars(
+  hvi_model_matrix,
+  project_dir = project_dir
+)
+
+if (length(global_selected_vars) == 0) {
+  stop("No selected vulnerability variables were identified.")
+}
+
+fold_tbl <- make_group_folds(
+  hvi_model_matrix$community,
+  k = k_folds_spatial,
+  seed = seed
+)
+
+hvi_model_matrix <- hvi_model_matrix %>%
+  left_join(fold_tbl, by = "community")
 
 # -----------------------------
-# FIT LOOP
+# STORAGE OBJECTS
 # -----------------------------
 spatial_metrics_list <- list()
 temporal_metrics_list <- list()
@@ -72,6 +97,9 @@ model_list <- list()
 endpoint_var_map <- list()
 fit_log <- list()
 
+# -----------------------------
+# FIT LOOP
+# -----------------------------
 for (i in seq_len(nrow(hvi_endpoint_metadata))) {
   ep_key      <- hvi_endpoint_metadata$endpoint_key[i]
   outcome_var <- hvi_endpoint_metadata$panel_outcome_col[i]
@@ -81,7 +109,11 @@ for (i in seq_len(nrow(hvi_endpoint_metadata))) {
     fit_log[[length(fit_log) + 1]] <- tibble(
       endpoint_key = ep_key,
       status = "skipped",
-      reason = "missing outcome column"
+      reason = "missing outcome column",
+      n_rows = NA_integer_,
+      n_events = NA_real_,
+      n_vars = NA_integer_,
+      vars_used = NA_character_
     )
     next
   }
@@ -90,23 +122,33 @@ for (i in seq_len(nrow(hvi_endpoint_metadata))) {
     fit_log[[length(fit_log) + 1]] <- tibble(
       endpoint_key = ep_key,
       status = "skipped",
-      reason = "missing heat_dose column"
+      reason = "missing heat_dose column",
+      n_rows = NA_integer_,
+      n_events = NA_real_,
+      n_vars = NA_integer_,
+      vars_used = NA_character_
     )
     next
   }
   
   z_vars_use <- infer_endpoint_selected_vars(
-    ep_key,
-    hvi_model_matrix,
-    fallback_vars = global_selected_vars
+    endpoint_key = ep_key,
+    dat = hvi_model_matrix,
+    fallback_vars = global_selected_vars,
+    project_dir = project_dir
   )
+  
   z_vars_use <- z_vars_use[z_vars_use %in% names(hvi_model_matrix)]
   
   if (length(z_vars_use) == 0) {
     fit_log[[length(fit_log) + 1]] <- tibble(
       endpoint_key = ep_key,
       status = "skipped",
-      reason = "no selected z vars"
+      reason = "no selected z vars",
+      n_rows = NA_integer_,
+      n_events = NA_real_,
+      n_vars = 0L,
+      vars_used = NA_character_
     )
     next
   }
@@ -122,7 +164,7 @@ for (i in seq_len(nrow(hvi_endpoint_metadata))) {
       all_of(outcome_var), all_of(heat_var), all_of(z_vars_use)
     ) %>%
     rename(
-      outcome   = all_of(outcome_var),
+      outcome = all_of(outcome_var),
       heat_dose = all_of(heat_var)
     ) %>%
     filter(!is.na(outcome), !is.na(heat_dose))
@@ -131,7 +173,11 @@ for (i in seq_len(nrow(hvi_endpoint_metadata))) {
     fit_log[[length(fit_log) + 1]] <- tibble(
       endpoint_key = ep_key,
       status = "skipped",
-      reason = "too few total events"
+      reason = "too few total events",
+      n_rows = nrow(dat_ep),
+      n_events = sum(dat_ep$outcome, na.rm = TRUE),
+      n_vars = length(z_vars_use),
+      vars_used = paste(z_vars_use, collapse = "; ")
     )
     next
   }
@@ -155,10 +201,10 @@ for (i in seq_len(nrow(hvi_endpoint_metadata))) {
     drop_na(all_of(z_vars_use), doy, dow, year) %>%
     mutate(
       community = as.character(community),
-      date      = as.Date(date),
-      doy       = as.integer(doy),
-      year      = factor(as.character(year)),
-      dow       = factor(as.character(dow))
+      date = as.Date(date),
+      doy = as.integer(doy),
+      year = factor(as.character(year)),
+      dow = factor(as.character(dow), levels = c("Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"))
     ) %>%
     as.data.frame()
   
@@ -166,12 +212,15 @@ for (i in seq_len(nrow(hvi_endpoint_metadata))) {
     fit_log[[length(fit_log) + 1]] <- tibble(
       endpoint_key = ep_key,
       status = "skipped",
-      reason = "no complete cases after filtering"
+      reason = "no complete cases after filtering",
+      n_rows = 0L,
+      n_events = NA_real_,
+      n_vars = length(z_vars_use),
+      vars_used = paste(z_vars_use, collapse = "; ")
     )
     next
   }
   
-  # formula for spatial CV + final full fit
   form_spatial_full <- build_formula(
     outcome_var  = "outcome",
     heat_var     = "heat_dose",
@@ -181,7 +230,6 @@ for (i in seq_len(nrow(hvi_endpoint_metadata))) {
     doy_k        = doy_k
   )
   
-  # formula for temporal CV only
   form_temporal <- build_formula(
     outcome_var  = "outcome",
     heat_var     = "heat_dose",
@@ -214,11 +262,16 @@ for (i in seq_len(nrow(hvi_endpoint_metadata))) {
         ) %>%
         as.data.frame()
       
-      fit_cv <- fit_endpoint_model(
-        dat = train_dat,
-        form = form_spatial_full,
-        family_choice = family_choice
+      fit_cv <- tryCatch(
+        fit_endpoint_model(
+          dat = train_dat,
+          form = form_spatial_full,
+          family_choice = family_choice
+        ),
+        error = function(e) NULL
       )
+      
+      if (is.null(fit_cv)) next
       
       test_dat$pred <- as.numeric(
         predict(fit_cv, newdata = test_dat, type = "response")
@@ -279,11 +332,16 @@ for (i in seq_len(nrow(hvi_endpoint_metadata))) {
         ) %>%
         as.data.frame()
       
-      fit_cv <- fit_endpoint_model(
-        dat = train_dat,
-        form = form_temporal,
-        family_choice = family_choice
+      fit_cv <- tryCatch(
+        fit_endpoint_model(
+          dat = train_dat,
+          form = form_temporal,
+          family_choice = family_choice
+        ),
+        error = function(e) NULL
       )
+      
+      if (is.null(fit_cv)) next
       
       test_dat$pred <- as.numeric(
         predict(fit_cv, newdata = test_dat, type = "response")
@@ -329,11 +387,27 @@ for (i in seq_len(nrow(hvi_endpoint_metadata))) {
     ) %>%
     as.data.frame()
   
-  fit_full <- fit_endpoint_model(
-    dat = dat_ep_full,
-    form = form_spatial_full,
-    family_choice = family_choice
+  fit_full <- tryCatch(
+    fit_endpoint_model(
+      dat = dat_ep_full,
+      form = form_spatial_full,
+      family_choice = family_choice
+    ),
+    error = function(e) NULL
   )
+  
+  if (is.null(fit_full)) {
+    fit_log[[length(fit_log) + 1]] <- tibble(
+      endpoint_key = ep_key,
+      status = "skipped",
+      reason = "full model fit failed",
+      n_rows = nrow(dat_ep_full),
+      n_events = sum(dat_ep_full$outcome, na.rm = TRUE),
+      n_vars = length(z_vars_use),
+      vars_used = paste(z_vars_use, collapse = "; ")
+    )
+    next
+  }
   
   model_list[[ep_key]] <- fit_full
   coef_list[[ep_key]] <- extract_coef_table(fit_full, ep_key)
@@ -357,7 +431,8 @@ for (i in seq_len(nrow(hvi_endpoint_metadata))) {
     reason = NA_character_,
     n_rows = nrow(dat_ep_full),
     n_events = sum(dat_ep_full$outcome, na.rm = TRUE),
-    n_vars = length(z_vars_use)
+    n_vars = length(z_vars_use),
+    vars_used = paste(z_vars_use, collapse = "; ")
   )
 }
 
@@ -374,36 +449,47 @@ endpoint_coefficients <- bind_rows(coef_list)
 endpoint_interaction_betas <- bind_rows(interaction_beta_list)
 endpoint_main_betas <- bind_rows(main_beta_list)
 
-spatial_summary <- spatial_metrics %>%
-  group_by(endpoint_key) %>%
-  summarise(
-    cv_type = "spatial",
-    folds = n(),
-    mean_mae = mean(mae, na.rm = TRUE),
-    mean_rmse = mean(rmse, na.rm = TRUE),
-    mean_poisson_deviance = mean(poisson_deviance, na.rm = TRUE),
-    mean_cor_daily_spearman = mean(cor_daily_spearman, na.rm = TRUE),
-    mean_cor_comm_spearman = mean(cor_comm_spearman, na.rm = TRUE),
-    mean_cor_comm_pearson = mean(cor_comm_pearson, na.rm = TRUE),
-    .groups = "drop"
-  )
+spatial_summary <- if (nrow(spatial_metrics) > 0) {
+  spatial_metrics %>%
+    group_by(endpoint_key) %>%
+    summarise(
+      cv_type = "spatial",
+      folds = n(),
+      mean_mae = mean(mae, na.rm = TRUE),
+      mean_rmse = mean(rmse, na.rm = TRUE),
+      mean_poisson_deviance = mean(poisson_deviance, na.rm = TRUE),
+      mean_cor_daily_spearman = mean(cor_daily_spearman, na.rm = TRUE),
+      mean_cor_comm_spearman = mean(cor_comm_spearman, na.rm = TRUE),
+      mean_cor_comm_pearson = mean(cor_comm_pearson, na.rm = TRUE),
+      .groups = "drop"
+    )
+} else {
+  tibble()
+}
 
-temporal_summary <- temporal_metrics %>%
-  group_by(endpoint_key) %>%
-  summarise(
-    cv_type = "temporal",
-    folds = n(),
-    mean_mae = mean(mae, na.rm = TRUE),
-    mean_rmse = mean(rmse, na.rm = TRUE),
-    mean_poisson_deviance = mean(poisson_deviance, na.rm = TRUE),
-    mean_cor_daily_spearman = mean(cor_daily_spearman, na.rm = TRUE),
-    mean_cor_comm_spearman = mean(cor_comm_spearman, na.rm = TRUE),
-    mean_cor_comm_pearson = mean(cor_comm_pearson, na.rm = TRUE),
-    .groups = "drop"
-  )
+temporal_summary <- if (nrow(temporal_metrics) > 0) {
+  temporal_metrics %>%
+    group_by(endpoint_key) %>%
+    summarise(
+      cv_type = "temporal",
+      folds = n(),
+      mean_mae = mean(mae, na.rm = TRUE),
+      mean_rmse = mean(rmse, na.rm = TRUE),
+      mean_poisson_deviance = mean(poisson_deviance, na.rm = TRUE),
+      mean_cor_daily_spearman = mean(cor_daily_spearman, na.rm = TRUE),
+      mean_cor_comm_spearman = mean(cor_comm_spearman, na.rm = TRUE),
+      mean_cor_comm_pearson = mean(cor_comm_pearson, na.rm = TRUE),
+      .groups = "drop"
+    )
+} else {
+  tibble()
+}
 
 endpoint_model_performance <- bind_rows(spatial_summary, temporal_summary) %>%
-  left_join(hvi_endpoint_metadata %>% select(endpoint_key, outcome_label, source, domain), by = "endpoint_key") %>%
+  left_join(
+    hvi_endpoint_metadata %>% select(endpoint_key, outcome_label, source, domain),
+    by = "endpoint_key"
+  ) %>%
   relocate(outcome_label, source, domain, .after = endpoint_key)
 
 # -----------------------------
@@ -419,8 +505,14 @@ write_csv(temporal_predictions, file.path(out_dir, "09a_cv_predictions_temporal.
 write_csv(endpoint_coefficients, file.path(out_dir, "09a_endpoint_coefficients.csv"))
 write_csv(endpoint_interaction_betas, file.path(out_dir, "09a_endpoint_interaction_betas.csv"))
 write_csv(endpoint_main_betas, file.path(out_dir, "09a_endpoint_main_betas.csv"))
-if (save_model_rds) saveRDS(model_list, file.path(out_dir, "09a_endpoint_models.rds"))
 
+if (save_model_rds) {
+  saveRDS(model_list, file.path(out_dir, "09a_endpoint_models.rds"))
+}
+
+# -----------------------------
+# SAVE TO ENVIRONMENT
+# -----------------------------
 assign("endpoint_models", model_list, envir = .GlobalEnv)
 assign("endpoint_var_map", endpoint_var_map, envir = .GlobalEnv)
 assign("endpoint_model_performance", endpoint_model_performance, envir = .GlobalEnv)
@@ -429,3 +521,5 @@ assign("endpoint_main_betas", endpoint_main_betas, envir = .GlobalEnv)
 assign("endpoint_fit_log", fit_log, envir = .GlobalEnv)
 
 message("09a complete. Outputs written to: ", out_dir)
+message("Endpoints fit successfully: ", sum(fit_log$status == "fit", na.rm = TRUE))
+message("Endpoints skipped: ", sum(fit_log$status == "skipped", na.rm = TRUE))

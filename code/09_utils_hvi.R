@@ -39,16 +39,30 @@ make_group_folds <- function(groups, k = 5, seed = 1) {
   tibble(community = ug, fold = rep(seq_len(k), length.out = length(ug)))
 }
 
-infer_selected_var_table <- function() {
+infer_selected_var_table <- function(project_dir = NULL, subdir = "variable_selection") {
   if (exists("selected_variables_final", envir = .GlobalEnv)) {
-    get("selected_variables_final", envir = .GlobalEnv)
-  } else {
-    NULL
+    return(get("selected_variables_final", envir = .GlobalEnv))
   }
+  
+  if (!is.null(project_dir)) {
+    rds_path <- file.path(project_dir, subdir, "selected_variables_final.rds")
+    csv_path <- file.path(project_dir, subdir, "selected_variables_final.csv")
+    
+    if (file.exists(rds_path)) {
+      return(readRDS(rds_path))
+    }
+    
+    if (file.exists(csv_path)) {
+      return(readr::read_csv(csv_path, show_col_types = FALSE))
+    }
+  }
+  
+  NULL
 }
 
-infer_global_selected_vars <- function(dat) {
-  sv <- infer_selected_var_table()
+infer_global_selected_vars <- function(dat, project_dir = NULL, subdir = "variable_selection") {
+  sv <- infer_selected_var_table(project_dir = project_dir, subdir = subdir)
+  
   if (!is.null(sv) && all(c("variable", "selected_final") %in% names(sv))) {
     vars <- sv %>%
       filter(selected_final %in% TRUE) %>%
@@ -57,25 +71,52 @@ infer_global_selected_vars <- function(dat) {
     vars <- vars[vars %in% names(dat)]
     if (length(vars) > 0) return(vars)
   }
+  
   if (exists("final_selected_vulnerability_vars", envir = .GlobalEnv)) {
     vars <- get("final_selected_vulnerability_vars", envir = .GlobalEnv)
     vars <- vars[vars %in% names(dat)]
     if (length(vars) > 0) return(vars)
   }
-  names(dat)[str_detect(names(dat), "^z_")]
+  
+  if (!is.null(project_dir)) {
+    rds_path <- file.path(project_dir, subdir, "final_selected_vulnerability_vars.rds")
+    csv_path <- file.path(project_dir, subdir, "final_selected_vulnerability_vars.csv")
+    
+    if (file.exists(rds_path)) {
+      vars <- readRDS(rds_path)
+      vars <- vars[vars %in% names(dat)]
+      if (length(vars) > 0) return(vars)
+    }
+    
+    if (file.exists(csv_path)) {
+      vars <- readr::read_csv(csv_path, show_col_types = FALSE) %>%
+        pull(variable) %>%
+        unique()
+      vars <- vars[vars %in% names(dat)]
+      if (length(vars) > 0) return(vars)
+    }
+  }
+  
+  stop(
+    "No selected vulnerability variables found. ",
+    "Run 08_variable_selection_hvi.R first or load the saved selected-variable artifacts."
+  )
 }
 
-infer_endpoint_selected_vars <- function(endpoint_key, dat, fallback_vars = NULL) {
-  if (is.null(fallback_vars)) fallback_vars <- infer_global_selected_vars(dat)
-  sv <- infer_selected_var_table()
+infer_endpoint_selected_vars <- function(endpoint_key, dat, fallback_vars = NULL, project_dir = NULL, subdir = "variable_selection") {
+  if (is.null(fallback_vars)) {
+    fallback_vars <- infer_global_selected_vars(dat, project_dir = project_dir, subdir = subdir)
+  }
+  
+  sv <- infer_selected_var_table(project_dir = project_dir, subdir = subdir)
   if (is.null(sv) || !"variable" %in% names(sv)) return(fallback_vars)
-
+  
   candidate_endpoint_cols <- c("endpoint_key", "outcome", "endpoint")
   endpoint_col <- candidate_endpoint_cols[candidate_endpoint_cols %in% names(sv)][1]
-
+  
   selected_col <- c("selected_final", "selected")
   selected_col <- selected_col[selected_col %in% names(sv)][1]
-
+  
   if (length(endpoint_col) == 1 && !is.na(endpoint_col) &&
       length(selected_col) == 1 && !is.na(selected_col)) {
     vars <- sv %>%
@@ -85,7 +126,7 @@ infer_endpoint_selected_vars <- function(endpoint_key, dat, fallback_vars = NULL
     vars <- vars[vars %in% names(dat)]
     if (length(vars) > 0) return(vars)
   }
-
+  
   if (length(selected_col) == 1 && !is.na(selected_col)) {
     vars <- sv %>%
       filter(.data[[selected_col]] %in% TRUE) %>%
@@ -94,7 +135,7 @@ infer_endpoint_selected_vars <- function(endpoint_key, dat, fallback_vars = NULL
     vars <- vars[vars %in% names(dat)]
     if (length(vars) > 0) return(vars)
   }
-
+  
   fallback_vars
 }
 

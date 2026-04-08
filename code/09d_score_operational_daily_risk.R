@@ -57,16 +57,16 @@ hvi_model_matrix <- hvi_model_matrix %>%
                   "4" = "2022")
   )
 
-score_df <- score_df %>%
-  mutate(
-    year = recode(as.character(year),
-                  "1" = "2019",
-                  "2" = "2020",
-                  "3" = "2021",
-                  "4" = "2022"),
-    year = factor(year, levels = fit$xlevels[["year"]]),
-    dow = factor(as.character(dow), levels = fit$xlevels[["dow"]])
-  )
+# score_df <- score_df %>%
+#   mutate(
+#     year = recode(as.character(year),
+#                   "1" = "2019",
+#                   "2" = "2020",
+#                   "3" = "2021",
+#                   "4" = "2022"),
+#     year = factor(year, levels = fit$xlevels[["year"]]),
+#     dow = factor(as.character(dow), levels = fit$xlevels[["dow"]])
+#   )
 
 for (ep_key in names(endpoint_models)) {
   message("Scoring endpoint: ", ep_key)

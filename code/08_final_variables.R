@@ -1404,6 +1404,7 @@ ggsave(
 )
 
 # Figure 4: Heatmap for final selected variables
+# Figure 4: Heatmap for final selected variables
 if (length(final_selected_vars) >= 1) {
   endpoint_order <- hvi_endpoint_metadata$endpoint_key
   endpoint_order_labels <- pretty_endpoint_label(endpoint_order)
@@ -1421,28 +1422,47 @@ if (length(final_selected_vars) >= 1) {
       variable_label = factor(variable_label, levels = rev(pretty_var_label(final_selected_vars)))
     )
   
+  # robust symmetric limits to prevent a few extreme coefficients from dominating
+  heat_lim <- quantile(abs(heatmap_dat$estimate), probs = 0.90, na.rm = TRUE)
+  if (!is.finite(heat_lim) || heat_lim <= 0) {
+    heat_lim <- max(abs(heatmap_dat$estimate), na.rm = TRUE)
+  }
+  
   fig_heatmap <- ggplot(heatmap_dat, aes(x = endpoint_label, y = variable_label, fill = estimate)) +
     geom_tile(color = "white", linewidth = 0.25) +
     geom_point(
       data = ~ dplyr::filter(.x, p.value < 0.05),
-      size = 2.0
+      size = 2.0,
+      color = "black"
     ) +
     scale_fill_gradient2(
       low = "#2c7bb6",
       mid = "white",
       high = "#d7191c",
       midpoint = 0,
+      limits = c(-heat_lim, heat_lim),
+      oob = scales::squish,
       name = "Interaction\nbeta"
+    ) +
+    guides(
+      fill = guide_colorbar(
+        barwidth = unit(12, "cm"),
+        barheight = unit(0.8, "cm"),
+        title.position = "top",
+        title.hjust = 0.5
+      )
     ) +
     labs(
       title = "Heat-vulnerability interaction patterns across endpoints",
-      subtitle = "Tile fill shows interaction coefficient; points indicate p < 0.05",
       x = NULL,
       y = NULL
     ) +
     theme_pub(base_size = 11) +
     theme(
-      axis.text.x = element_text(angle = 45, hjust = 1)
+      axis.text.x = element_text(angle = 45, hjust = 1),
+      legend.position = "bottom",
+      legend.title = element_text(size = 12, face = "bold"),
+      legend.text = element_text(size = 11)
     )
   
   ggsave(

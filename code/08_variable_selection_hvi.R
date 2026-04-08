@@ -88,6 +88,11 @@ base_size <- 13
 # -----------------------------
 # HELPER FUNCTIONS
 # -----------------------------
+
+selected_vars_rds <- file.path(out_dir, "final_selected_vulnerability_vars.rds")
+selected_vars_csv <- file.path(out_dir, "final_selected_vulnerability_vars.csv")
+selection_summary_rds <- file.path(out_dir, "selected_variables_final.rds")
+
 rescale_0_100 <- function(x) {
   rng <- range(x, na.rm = TRUE)
   if (anyNA(rng) || diff(rng) == 0) return(rep(50, length(x)))

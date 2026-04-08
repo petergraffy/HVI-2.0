@@ -1,30 +1,28 @@
 # ================================================================================================
-# HVI 2.0 | 06_build_hvi_model_matrix.R
+# HVI 2.0 | 07_build_hvi_model_matrix.R
 # Build CA x day model matrix for 2019-2022 overlap period
 #
-# Uses objects already in memory:
-#   - panel_overlap (daily CA x day panel with outcomes + climate)
-#   - mrt_table_expanded (endpoint MRT summary table)
+# Required objects in memory:
+#   - panel_overlap        : daily CA x day panel with outcomes + climate
+#   - mrt_table_expanded   : endpoint MRT summary table from 05_dlnm_mrt.R
 #
-# Uses baseline vulnerability either:
-#   - from an object in memory, OR
-#   - from disk
+# Baseline vulnerability:
+#   - uses object in memory if available, otherwise reads from disk
 #
 # Creates:
-#   - hvi_endpoint_metadata   (endpoint MRT + lag + panel-column mapping)
-#   - hvi_model_matrix        (CA x day model matrix)
+#   - hvi_endpoint_metadata
+#   - hvi_model_matrix
 #
 # Optional CSV exports:
 #   - hvi_endpoint_metadata.csv
 #   - hvi_model_matrix_2019_2022.csv
 #
 # Notes:
-# - mrt_table_expanded contains MRT but not lag.
-# - If a true lag table/object exists in memory, set true_lag_obj below.
-# - Otherwise fallback lags are used:
-#       no_lag_forced = 0
-#       EMS DLNM      = 1
-#       Mortality/ED  = 2
+# - This version uses tmax for all downstream exposure features.
+# - This version expects mrt_table_expanded to already contain:
+#     outcome, outcome_label, mrt, n_days, mean_daily_count, model_type,
+#     endpoint, domain, max_lag, lag_input, study_year_start, study_year_end,
+#     study_window_label
 # ================================================================================================
 
 suppressPackageStartupMessages({
@@ -41,26 +39,17 @@ suppressPackageStartupMessages({
 # -----------------------------
 project_dir <- "C:/Users/Peter Graffy/Box/HVI2.0"
 
-# in-memory objects
+analysis_year_start <- 2019L
+analysis_year_end   <- 2022L
+
 daily_panel_obj <- "panel_overlap"
 mrt_table_obj   <- "mrt_table_expanded"
 
-# baseline vulnerability: prefer object if it exists, otherwise read from file
 baseline_obj  <- "baseline_vulnerability_ca_year"
 baseline_path <- file.path(project_dir, "Baseline Burden", "baseline_vulnerability_ca_year.csv")
 
-# optional true lag lookup object in memory
-# set to NULL if you do not have one
-# expected columns somewhere in it should identify endpoint + max_lag
-true_lag_obj <- NULL
-# examples later:
-# true_lag_obj <- "endpoint_lag_lookup"
-# true_lag_obj <- "dlnm_lag_table"
-
-# write outputs to disk?
 write_outputs <- TRUE
-
-out_model_matrix  <- file.path(project_dir, "hvi_model_matrix_2019_2022.csv")
+out_model_matrix <- file.path(project_dir, "hvi_model_matrix_2019_2022.csv")
 out_endpoint_meta <- file.path(project_dir, "hvi_endpoint_metadata.csv")
 
 # temperature / humidity
@@ -79,44 +68,59 @@ baseline_pop_col_candidates <- c("total_pop", "population", "pop")
 # left side = outcome key in mrt_table_expanded$outcome
 # panel_candidates = possible matching column names in panel_overlap
 endpoint_spec <- tribble(
-  ~endpoint_key,      ~panel_candidates,                                 ~include_in_hvi,
-  "deaths",           list(c("death_allcause", "deaths")),               TRUE,
-  "death_cvd",        list(c("death_cvd")),                              TRUE,
-  "death_injury",     list(c("death_injury")),                           TRUE,
-  "death_mental",     list(c("death_mental")),                           TRUE,
-  "death_renal",      list(c("death_renal")),                            TRUE,
-  "death_respiratory",list(c("death_resp", "death_respiratory")),        TRUE,
+  ~endpoint_key,       ~panel_candidates,                                  ~include_in_hvi,
   
-  "ed_visits",        list(c("ed_allcause", "ed_visits")),               TRUE,
-  "ed_cvd",           list(c("ed_cvd")),                                 TRUE,
-  "ed_injury",        list(c("ed_injury")),                              TRUE,
-  "ed_renal",         list(c("ed_renal")),                               TRUE,
-  "ed_respiratory",   list(c("ed_resp", "ed_respiratory")),              TRUE,
-  "ed_syncope",       list(c("ed_syncope")),                             TRUE,
-  "ed_dehydration",   list(c("ed_dehydration")),                         TRUE,
+  # -----------------------------
+  # MORTALITY
+  # -----------------------------
+  "deaths",            list(c("death_allcause", "deaths")),                TRUE,
+  "death_cvd",         list(c("death_cvd")),                               TRUE,
+  "death_respiratory", list(c("death_resp", "death_respiratory")),         TRUE,
+  "death_renal",       list(c("death_renal")),                             TRUE,
+  "death_neurologic",  list(c("death_neuro", "death_neurologic")),         TRUE,
+  "death_mental",      list(c("death_mental")),                            TRUE,
+  "death_gi",          list(c("death_gi")),                                TRUE,
+  "death_injury",      list(c("death_injury")),                            TRUE,
+  "death_syncope",     list(c("death_syncope")),                           TRUE,
+  "death_dehydration", list(c("death_dehydration")),                       TRUE,
+  "death_heat",        list(c("death_heat")),                              TRUE,
   
-  "ems_calls",        list(c("ems_allcause", "ems_calls")),              TRUE,
-  "ems_cvd",          list(c("ems_cvd")),                                TRUE,
-  "ems_injury",       list(c("ems_injury")),                             TRUE,
-  "ems_mental",       list(c("ems_mental")),                             TRUE,
-  "ems_neuro",        list(c("ems_neuro", "ems_neurologic")),            TRUE,
-  "ems_respiratory",  list(c("ems_resp", "ems_respiratory")),            TRUE,
-  "ems_syncope",      list(c("ems_syncope")),                            TRUE,
-  "ems_bleeding",     list(c("ems_bleeding")),                           TRUE,
-  "ems_gi",           list(c("ems_gi")),                                 TRUE
+  # -----------------------------
+  # ED
+  # -----------------------------
+  "ed_visits",         list(c("ed_allcause", "ed_visits")),                TRUE,
+  "ed_cvd",            list(c("ed_cvd")),                                  TRUE,
+  "ed_respiratory",    list(c("ed_resp", "ed_respiratory")),               TRUE,
+  "ed_renal",          list(c("ed_renal")),                                TRUE,
+  "ed_neurologic",     list(c("ed_neuro", "ed_neurologic")),               TRUE,
+  "ed_mental",         list(c("ed_mental")),                               TRUE,
+  "ed_gi",             list(c("ed_gi")),                                   TRUE,
+  "ed_injury",         list(c("ed_injury")),                               TRUE,
+  "ed_syncope",        list(c("ed_syncope")),                              TRUE,
+  "ed_dehydration",    list(c("ed_dehydration")),                          TRUE,
+  "ed_heat",           list(c("ed_heat")),                                 TRUE,
+  
+  # -----------------------------
+  # EMS
+  # -----------------------------
+  "ems_calls",         list(c("ems_allcause", "ems_calls")),               TRUE,
+  "ems_cvd",           list(c("ems_cvd")),                                 TRUE,
+  "ems_respiratory",   list(c("ems_resp", "ems_respiratory")),             TRUE,
+  "ems_neuro",         list(c("ems_neuro", "ems_neurologic")),             TRUE,
+  "ems_mental",        list(c("ems_mental")),                              TRUE,
+  "ems_gi",            list(c("ems_gi")),                                  TRUE,
+  "ems_bleeding",      list(c("ems_bleeding")),                            TRUE,
+  "ems_injury",        list(c("ems_injury")),                              TRUE,
+  "ems_syncope",       list(c("ems_syncope")),                             TRUE,
+  "ems_heat",          list(c("ems_heat")),                                TRUE
 )
 
 # vulnerability variables to carry into the model matrix
 candidate_vuln_vars <- c(
-  # ACS / demographics
   "pop_density_km2", "mean_age", "median_age", "mean_black", "mean_hisp", "mean_white",
   "mean_asian", "mean_income", "median_income", "mean_unemployed", "mean_employed",
   "mean_college", "mean_hs", "mean_male", "mean_female",
-  
-  # NDVI / air pollution / AC
   "ndvi", "mean_ndvi", "ac_prob", "ac_cbsa_rank", "no2", "pm25",
-  
-  # SVI
   "svi_rpl_theme1", "svi_rpl_theme2", "svi_rpl_theme3", "svi_rpl_theme4", "svi_rpl_themes",
   "svi_ep_pov", "svi_ep_unemp", "svi_ep_nohsdp", "svi_ep_age65", "svi_ep_age17",
   "svi_ep_disabl", "svi_ep_sngpnt", "svi_ep_limeng", "svi_ep_minrty",
@@ -131,12 +135,6 @@ center_scale_within_overlap <- TRUE
 # -----------------------------
 pick_first_existing <- function(df, candidates) {
   hit <- candidates[candidates %in% names(df)][1]
-  if (length(hit) == 0 || is.na(hit)) return(NA_character_)
-  hit
-}
-
-pick_first_existing_value <- function(candidates, available_names) {
-  hit <- candidates[candidates %in% available_names][1]
   if (length(hit) == 0 || is.na(hit)) return(NA_character_)
   hit
 }
@@ -220,16 +218,19 @@ daily_panel <- daily_panel %>%
     year      = year(date),
     month     = month(date),
     doy       = yday(date),
-    dow       = wday(date)
+    dow       = factor(wday(date),
+                       levels = levels(wday(
+                         seq.Date(as.Date("2023-01-01"), by = "day", length.out = 7)
+                       )))
   ) %>%
-  filter(year >= 2019, year <= 2022)
+  filter(year >= analysis_year_start, year <= analysis_year_end)
 
 baseline <- baseline %>%
   mutate(
     community = clean_community(community),
     year = as.integer(year)
   ) %>%
-  filter(year >= 2019, year <= 2022)
+  filter(year >= analysis_year_start, year <= analysis_year_end)
 
 # -----------------------------
 # 3. Vulnerability variables
@@ -282,7 +283,6 @@ if (!is.na(panel_pop_col) && panel_pop_col %in% names(model_dat)) {
 # -----------------------------
 # 5. Build endpoint metadata
 # -----------------------------
-# 5a. Resolve panel outcome columns
 endpoint_meta_base <- endpoint_spec %>%
   rowwise() %>%
   mutate(
@@ -290,19 +290,36 @@ endpoint_meta_base <- endpoint_spec %>%
   ) %>%
   ungroup()
 
-# 5b. Build base metadata from mrt_table_expanded
-# mrt_table_expanded fields seen:
-# outcome, outcome_label, mrt, n_days, mean_daily_count, model_type, endpoint, domain
+required_mrt_cols <- c(
+  "outcome", "outcome_label", "mrt", "n_days", "mean_daily_count",
+  "model_type", "endpoint", "domain", "max_lag", "lag_input",
+  "study_year_start", "study_year_end", "study_window_label"
+)
+
+missing_mrt_cols <- setdiff(required_mrt_cols, names(mrt_table_expanded))
+if (length(missing_mrt_cols) > 0) {
+  stop(
+    "mrt_table_expanded is missing required columns: ",
+    paste(missing_mrt_cols, collapse = ", "),
+    ". Rebuild MRTs from 05_dlnm_mrt.R before running this script."
+  )
+}
+
 endpoint_meta <- mrt_table_expanded %>%
   transmute(
-    endpoint_key      = as.character(outcome),
-    outcome_label     = outcome_label,
-    mrt               = as.numeric(mrt),
-    n_days            = as.integer(n_days),
-    mean_daily_count  = as.numeric(mean_daily_count),
-    model_type        = as.character(model_type),
-    source            = as.character(endpoint),
-    domain            = as.character(domain)
+    endpoint_key       = as.character(outcome),
+    outcome_label      = as.character(outcome_label),
+    mrt                = as.numeric(mrt),
+    n_days             = as.integer(n_days),
+    mean_daily_count   = as.numeric(mean_daily_count),
+    model_type         = as.character(model_type),
+    source             = as.character(endpoint),
+    domain             = as.character(domain),
+    max_lag            = as.integer(max_lag),
+    lag_input          = as.integer(lag_input),
+    study_year_start   = as.integer(study_year_start),
+    study_year_end     = as.integer(study_year_end),
+    study_window_label = as.character(study_window_label)
   ) %>%
   left_join(
     endpoint_meta_base %>%
@@ -317,48 +334,22 @@ if (nrow(endpoint_meta) == 0) {
   stop("No endpoints matched between mrt_table_expanded and the daily panel.")
 }
 
-# 5c. Attach true lags if available, otherwise use fallback lags
-if (!is.null(true_lag_obj) && exists(true_lag_obj, envir = .GlobalEnv)) {
-  lag_df <- get(true_lag_obj, envir = .GlobalEnv) %>%
-    clean_names()
-  
-  lag_endpoint_col <- pick_first_existing(lag_df, c("endpoint_key", "outcome", "endpoint"))
-  lag_value_col    <- pick_first_existing(lag_df, c("max_lag", "lag", "lag_days", "best_lag"))
-  
-  if (is.na(lag_endpoint_col) || is.na(lag_value_col)) {
-    stop("true_lag_obj exists but no endpoint / lag columns could be identified.")
-  }
-  
-  lag_lookup <- lag_df %>%
-    transmute(
-      endpoint_key = as.character(.data[[lag_endpoint_col]]),
-      max_lag = as.integer(round(as.numeric(.data[[lag_value_col]])))
-    ) %>%
-    distinct(endpoint_key, .keep_all = TRUE)
-  
-  endpoint_meta <- endpoint_meta %>%
-    left_join(lag_lookup, by = "endpoint_key")
-} else {
-  endpoint_meta <- endpoint_meta %>%
-    mutate(max_lag = NA_integer_)
+if (any(is.na(endpoint_meta$mrt))) {
+  warning("Some endpoints have missing MRT values and will still be carried forward.")
 }
 
-endpoint_meta <- endpoint_meta %>%
-  mutate(
-    max_lag = case_when(
-      !is.na(max_lag)                  ~ max_lag,
-      model_type == "no_lag_forced"    ~ 0L,
-      str_to_upper(source) == "EMS"    ~ 1L,
-      str_to_upper(source) %in% c("ED", "MORTALITY") ~ 2L,
-      TRUE                             ~ 0L
-    )
-  )
+if (any(is.na(endpoint_meta$max_lag))) {
+  stop("Some endpoints have missing max_lag in mrt_table_expanded.")
+}
 
 message("Endpoint metadata:")
-print(endpoint_meta %>% select(endpoint_key, panel_outcome_col, mrt, max_lag, model_type, source, domain))
+print(
+  endpoint_meta %>%
+    select(endpoint_key, panel_outcome_col, outcome_label, mrt, max_lag, model_type, source, domain)
+)
 
 # -----------------------------
-# 6. Build endpoint-specific heat features
+# 6. Build endpoint-specific heat features from tmax
 # -----------------------------
 model_dat <- model_dat %>%
   arrange(community, date)
@@ -388,7 +379,9 @@ for (i in seq_len(nrow(endpoint_meta))) {
 # -----------------------------
 # 7. Keep final columns
 # -----------------------------
-outcome_cols_present <- endpoint_meta$panel_outcome_col[endpoint_meta$panel_outcome_col %in% names(model_dat)]
+outcome_cols_present <- endpoint_meta$panel_outcome_col[
+  endpoint_meta$panel_outcome_col %in% names(model_dat)
+]
 
 heat_cols_present <- names(model_dat)[
   str_detect(names(model_dat), "^temp_excess__|^heat_dose__|^mrt__|^max_lag__")
@@ -443,15 +436,15 @@ message("Date range: ", min(hvi_model_matrix$date, na.rm = TRUE), " to ", max(hv
 message("\nEndpoints included:")
 print(
   hvi_endpoint_metadata %>%
-    select(endpoint_key, panel_outcome_col, outcome_label, mrt, max_lag, source, domain, model_type)
+    select(endpoint_key, panel_outcome_col, outcome_label, mrt, max_lag, source, domain, model_type, study_window_label)
 )
 
 message("\nMissingness check for mapped outcome columns:")
 print(
   hvi_endpoint_metadata %>%
     mutate(
-      n_missing = map_int(panel_outcome_col, ~ sum(is.na(hvi_model_matrix[[.x]]))),
-      n_nonzero = map_int(panel_outcome_col, ~ sum(hvi_model_matrix[[.x]] > 0, na.rm = TRUE))
+      n_missing = purrr::map_int(panel_outcome_col, ~ sum(is.na(hvi_model_matrix[[.x]]))),
+      n_nonzero = purrr::map_int(panel_outcome_col, ~ sum(hvi_model_matrix[[.x]] > 0, na.rm = TRUE))
     ) %>%
     select(endpoint_key, panel_outcome_col, n_missing, n_nonzero)
 )

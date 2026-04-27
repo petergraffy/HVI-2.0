@@ -1,0 +1,38 @@
+# Local environment and editor state
+.Renviron
+.Rhistory
+.RData
+.Rproj.user/
+.vscode/
+
+# Private or large data products
+data/
+code/data/
+results/
+code/results/
+code/09_model_outputs/
+*.rds
+*.rda
+*.RData
+*.parquet
+*.feather
+*.fst
+*.nc
+
+# Record-level health data should never be committed
+*standardized.csv
+*all_deaths*.csv
+*CAP_ed*.csv
+*CAP_ED*.csv
+*EDIC_*.csv
+*new_files_deduplicated*.csv
+*outcomes_complete*.csv
+
+# Generated dashboard/manuscript bundles can be rebuilt
+public_exports/
+publication_outputs/
+code/outputs/publication/
+
+# OS artifacts
+Thumbs.db
+Desktop.ini

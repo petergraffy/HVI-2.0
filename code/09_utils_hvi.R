@@ -13,6 +13,8 @@ suppressPackageStartupMessages({
   library(lubridate)
 })
 
+source(file.path(if (dir.exists("code")) "code" else ".", "00_config.R"))
+
 rescale_0_100 <- function(x) {
   rng <- range(x, na.rm = TRUE)
   if (anyNA(rng) || diff(rng) == 0) return(rep(50, length(x)))

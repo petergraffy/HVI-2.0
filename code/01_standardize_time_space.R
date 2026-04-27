@@ -11,14 +11,17 @@ suppressPackageStartupMessages({
   library(stringr)
 })
 
+source(file.path(if (dir.exists("code")) "code" else ".", "00_config.R"))
+
 # -------------------------------------------------------------------------------------
 # File paths
 # -------------------------------------------------------------------------------------
 
-path_deaths <- "C:/Users/Peter Graffy/Box/HVI2.0/Mortality/all_deaths.csv"
-path_ed     <- "C:/Users/Peter Graffy/Box/HVI2.0/ED/ed_outcomes_complete.csv"
-path_ems    <- "C:/Users/Peter Graffy/Box/HVI2.0/EMS/new_files_deduplicated_clean.csv"
-path_ca     <- "C:/Users/Peter Graffy/Box/HVI2.0/comm_areas.geojson"
+path_deaths <- HVI_PATHS$raw$mortality
+path_ed     <- HVI_PATHS$raw$ed
+path_ems    <- HVI_PATHS$raw$ems
+path_ca     <- HVI_PATHS$raw$community_areas
+derived_dir <- HVI_PATHS$private_outputs$derived
 
 # -------------------------------------------------------------------------------------
 # Load data
@@ -326,13 +329,13 @@ ems %>%
 # 7. Save standardized files
 # -------------------------------------------------------------------------------------
 
-dir.create("data/derived", recursive = TRUE, showWarnings = FALSE)
+hvi_dir_create(derived_dir)
 
-fwrite(deaths,   "data/derived/mortality_standardized.csv")
-fwrite(ed,       "data/derived/ed_standardized.csv")
-fwrite(ems_final,"data/derived/ems_standardized.csv")
+fwrite(deaths,    file.path(derived_dir, "mortality_standardized.csv"))
+fwrite(ed,        file.path(derived_dir, "ed_standardized.csv"))
+fwrite(ems_final, file.path(derived_dir, "ems_standardized.csv"))
 
-cat("\nSaved standardized files to data/derived/\n")
+cat("\nSaved private standardized files to:\n", derived_dir, "\n")
 
 clean_comm <- function(x) {
   x %>%
@@ -433,4 +436,4 @@ panel <- panel %>%
     weekend = dow %in% c("7", "1")
   )
 
-fwrite(panel, "data/derived/community_day_panel.csv")
+fwrite(panel, file.path(derived_dir, "community_day_panel.csv"))

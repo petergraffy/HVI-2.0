@@ -12,16 +12,19 @@ suppressPackageStartupMessages({
   library(sf)
 })
 
+source(file.path(if (dir.exists("code")) "code" else ".", "00_config.R"))
+
 # -------------------------------------------------------------------------------------
 # File paths
 # -------------------------------------------------------------------------------------
 
-path_climate_hist <- "C:/Users/Peter Graffy/Box/HVI2.0/Climate/CA_temps_rh_90-23.csv"
-path_ca           <- "C:/Users/Peter Graffy/Box/HVI2.0/comm_areas.geojson"
+path_climate_hist <- HVI_PATHS$raw$climate_hist
+path_ca           <- HVI_PATHS$raw$community_areas
 
 # output folders
-dir.create("data/derived/climate", recursive = TRUE, showWarnings = FALSE)
-dir.create("data/raw/appeears", recursive = TRUE, showWarnings = FALSE)
+climate_derived_dir <- file.path(HVI_PATHS$private_outputs$derived, "climate")
+hvi_dir_create(climate_derived_dir)
+hvi_dir_create(file.path(HVI_PATHS$private_outputs$derived, "raw", "appeears"))
 
 # -------------------------------------------------------------------------------------
 # Helpers
@@ -187,8 +190,8 @@ hist_completeness <- clim_hist %>%
 cat("\nHistorical annual completeness summary:\n")
 print(hist_completeness)
 
-fwrite(clim_hist, "data/derived/climate/ca_temps_rh_1990_2023_standardized.csv")
-fwrite(hist_completeness, "data/derived/climate/ca_temps_rh_1990_2023_completeness.csv")
+fwrite(clim_hist, file.path(climate_derived_dir, "ca_temps_rh_1990_2023_standardized.csv"))
+fwrite(hist_completeness, file.path(climate_derived_dir, "ca_temps_rh_1990_2023_completeness.csv"))
 
 # -------------------------------------------------------------------------------------
 # 5) Prepare community polygons for AppEEARS 2024 request
@@ -224,7 +227,7 @@ comm_areas_wgs84 <- st_transform(comm_areas, 4326)
 
 st_write(
   comm_areas_wgs84,
-  "data/raw/appeears/chicago_community_areas_wgs84.geojson",
+  file.path(HVI_PATHS$private_outputs$derived, "raw", "appeears", "chicago_community_areas_wgs84.geojson"),
   delete_dsn = TRUE,
   quiet = TRUE
 )
@@ -262,7 +265,7 @@ st_write(
 # print(layers$Layer)
 # 
 # # --- 1) clean polygons (as you had) ---
-# comm_areas <- st_read("C:/Users/Peter Graffy/Box/HVI2.0/comm_areas.geojson", quiet = TRUE)
+# comm_areas <- st_read(HVI_PATHS$raw$community_areas, quiet = TRUE)
 # 
 # if (!"community" %in% names(comm_areas)) {
 #   nm <- intersect(c("community","ca_name","commarea","community_area"), names(comm_areas))[1]
@@ -335,9 +338,9 @@ suppressPackageStartupMessages({
 # File paths
 # -------------------------------------------------------------------------------------
 
-nc_path  <- "C:/Users/Peter Graffy/Box/HVI2.0/Climate/DAYMET.004_1km_aid0001.nc"
-ca_path  <- "C:/Users/Peter Graffy/Box/HVI2.0/comm_areas.geojson"
-out_csv  <- "C:/Users/Peter Graffy/Box/HVI2.0/Climate/ca_daymet_2024_aggregated.csv"
+nc_path  <- HVI_PATHS$raw$climate_2024_nc
+ca_path  <- HVI_PATHS$raw$community_areas
+out_csv  <- HVI_PATHS$raw$daymet_2024
 
 # -------------------------------------------------------------------------------------
 # Helpers
@@ -545,14 +548,14 @@ suppressPackageStartupMessages({
 # File paths
 # -------------------------------------------------------------------------------------
 
-path_clim_hist  <- "C:/Users/Peter Graffy/Box/HVI2.0/Climate/CA_temps_rh_90-23.csv"
-path_clim_2024  <- "C:/Users/Peter Graffy/Box/HVI2.0/Climate/ca_daymet_2024_aggregated.csv"
+path_clim_hist  <- HVI_PATHS$raw$climate_hist
+path_clim_2024  <- HVI_PATHS$raw$daymet_2024
 
 # update this if your panel is saved somewhere else
-path_panel      <- "data/derived/community_day_panel.csv"
+path_panel      <- file.path(HVI_PATHS$private_outputs$derived, "community_day_panel.csv")
 
-out_clim_full   <- "C:/Users/Peter Graffy/Box/HVI2.0/Climate/CA_temps_rh_90-24.csv"
-out_panel_clim  <- "data/derived/community_day_panel_with_climate.csv"
+out_clim_full   <- HVI_PATHS$raw$climate_full
+out_panel_clim  <- file.path(HVI_PATHS$private_outputs$derived, "community_day_panel_with_climate.csv")
 
 # -------------------------------------------------------------------------------------
 # Helpers

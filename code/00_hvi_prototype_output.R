@@ -8,7 +8,7 @@
 #   citywide_heat_effects, hvi_ranked, community_month_normals, heat_ref
 #
 # Writes frontend-ready files to:
-#   results/frontend_exports/
+#   public_exports/dashboard/
 # ======================================================================================
 
 suppressPackageStartupMessages({
@@ -23,11 +23,13 @@ suppressPackageStartupMessages({
   library(janitor)
 })
 
+source(file.path(if (dir.exists("code")) "code" else ".", "00_config.R"))
+
 # --------------------------------------------------------------------------------------
 # 0) Setup
 # --------------------------------------------------------------------------------------
-out_dir <- "results/frontend_exports"
-dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
+out_dir <- HVI_PATHS$public$dashboard
+hvi_dir_create(out_dir)
 
 `%||%` <- function(x, y) if (!is.null(x)) x else y
 
@@ -225,8 +227,8 @@ std_comm <- function(x) {
 # Add annual NO2 and PM2.5 to panel_use by community + year
 # ------------------------------------------------------------------
 
-no2_path  <- "C:/Users/Peter Graffy/Box/HVI2.0/Climate/no2_panel_community_year.csv"
-pm25_path <- "C:/Users/Peter Graffy/Box/HVI2.0/Climate/pm25_panel_community_year.csv"
+no2_path  <- file.path(HVI_PATHS$private, "Climate", "no2_panel_community_year.csv")
+pm25_path <- file.path(HVI_PATHS$private, "Climate", "pm25_panel_community_year.csv")
 
 no2_dat <- fread(no2_path) %>%
   janitor::clean_names()

@@ -39,12 +39,14 @@ suppressPackageStartupMessages({
   library(ggrepel)
 })
 
+source(file.path(if (dir.exists("code")) "code" else ".", "00_config.R"))
+
 # ------------------------------------------------------------------------------------------------
 # CONFIG
 # ------------------------------------------------------------------------------------------------
-project_dir <- "C:/Users/Peter Graffy/Box/HVI2.0"
+project_dir <- HVI_PATHS$private
 
-pub_dir <- file.path(project_dir, "publication_outputs")
+pub_dir <- HVI_PATHS$private_outputs$publication_outputs
 fig_dir <- file.path(pub_dir, "figures")
 tab_dir <- file.path(pub_dir, "tables")
 sup_dir <- file.path(pub_dir, "supplements")

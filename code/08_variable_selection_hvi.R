@@ -47,12 +47,14 @@ suppressPackageStartupMessages({
   library(scales)
 })
 
+source(file.path(if (dir.exists("code")) "code" else ".", "00_config.R"))
+
 # -----------------------------
 # CONFIG
 # -----------------------------
-project_dir <- "C:/Users/Peter Graffy/Box/HVI2.0"
-out_dir <- file.path(project_dir, "variable_selection")
-dir.create(out_dir, showWarnings = FALSE, recursive = TRUE)
+project_dir <- HVI_PATHS$private
+out_dir <- HVI_PATHS$private_outputs$variable_selection
+hvi_dir_create(out_dir)
 
 # objects already in memory
 model_matrix_obj  <- "hvi_model_matrix"

@@ -17,9 +17,10 @@
 # -----------------------------
 # CONFIG
 # -----------------------------
-project_dir <- "C:/Users/Peter Graffy/Box/HVI2.0"
-code_dir <- file.path(project_dir, "code")
-
+source(file.path(if (dir.exists("code")) "code" else ".", "00_config.R"))
+hvi_source("09_utils_hvi.R")
+project_dir <- HVI_PATHS$private
+code_dir <- file.path(HVI_PATHS$repo, "code")
 
 out_dir <- ensure_output_dir(project_dir, "09_model_outputs")
 

@@ -11,13 +11,15 @@ suppressPackageStartupMessages({
   library(janitor)
 })
 
+source(file.path(if (dir.exists("code")) "code" else ".", "00_config.R"))
+
 # -------------------------------------------------------------------------------------
 # File paths
 # -------------------------------------------------------------------------------------
 
-path_deaths <- "C:/Users/Peter Graffy/Box/HVI2.0/Mortality/all_deaths.csv"
-path_ed     <- "C:/Users/Peter Graffy/Box/HVI2.0/ED/ed_outcomes_complete.csv"
-path_ems    <- "C:/Users/Peter Graffy/Box/HVI2.0/EMS/new_files_deduplicated_clean.csv"
+path_deaths <- HVI_PATHS$raw$mortality
+path_ed     <- HVI_PATHS$raw$ed
+path_ems    <- HVI_PATHS$raw$ems
 
 # -------------------------------------------------------------------------------------
 # Helper function: dataset audit

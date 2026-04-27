@@ -4,12 +4,13 @@
 # and overall operational heat-health risk by community-day.
 # ================================================================================================
 
-source("09_utils_hvi.R")
+source(file.path(if (dir.exists("code")) "code" else ".", "00_config.R"))
+hvi_source("09_utils_hvi.R")
 
 # -----------------------------
 # CONFIG
 # -----------------------------
-project_dir <- getwd()
+project_dir <- HVI_PATHS$private
 out_dir <- ensure_output_dir(project_dir, "09_model_outputs")
 
 model_matrix_obj  <- "hvi_model_matrix"

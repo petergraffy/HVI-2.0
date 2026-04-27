@@ -34,10 +34,12 @@ suppressPackageStartupMessages({
   library(readr)
 })
 
+source(file.path(if (dir.exists("code")) "code" else ".", "00_config.R"))
+
 # -----------------------------
 # CONFIG
 # -----------------------------
-project_dir <- "C:/Users/Peter Graffy/Box/HVI2.0"
+project_dir <- HVI_PATHS$private
 
 analysis_year_start <- 2019L
 analysis_year_end   <- 2022L
@@ -46,7 +48,7 @@ daily_panel_obj <- "panel_overlap"
 mrt_table_obj   <- "mrt_table_expanded"
 
 baseline_obj  <- "baseline_vulnerability_ca_year"
-baseline_path <- file.path(project_dir, "Baseline Burden", "baseline_vulnerability_ca_year.csv")
+baseline_path <- file.path(HVI_PATHS$private_outputs$baseline_burden, "baseline_vulnerability_ca_year.csv")
 
 write_outputs <- TRUE
 out_model_matrix <- file.path(project_dir, "hvi_model_matrix_2019_2022.csv")

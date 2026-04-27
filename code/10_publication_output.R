@@ -37,10 +37,12 @@ suppressPackageStartupMessages({
   library(forcats)
 })
 
+source(file.path(if (dir.exists("code")) "code" else ".", "00_config.R"))
+
 # ------------------------------------------------------------------------------------------------
 # Directories
 # ------------------------------------------------------------------------------------------------
-pub_dir <- file.path("outputs", "publication")
+pub_dir <- HVI_PATHS$private_outputs$publication_outputs
 fig_dir <- file.path(pub_dir, "figures")
 tab_dir <- file.path(pub_dir, "tables")
 sup_dir <- file.path(pub_dir, "supplements")

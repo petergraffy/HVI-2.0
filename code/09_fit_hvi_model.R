@@ -29,19 +29,23 @@ suppressPackageStartupMessages({
   library(stringr)
 })
 
+source(file.path(if (dir.exists("code")) "code" else ".", "00_config.R"))
+
 # -----------------------------
 # CONFIG
 # -----------------------------
-project_dir <- "C:/Users/Peter Graffy/Box/HVI2.0"
+project_dir <- HVI_PATHS$private
 
 model_matrix_path <- file.path(project_dir, "hvi_model_matrix_2019_2022.csv")
 endpoint_meta_path <- file.path(project_dir, "hvi_endpoint_metadata.csv")
 
-out_cv_metrics      <- file.path(project_dir, "cv_metrics_by_endpoint.csv")
-out_cv_predictions  <- file.path(project_dir, "cv_predictions_all.csv")
-out_hvi_endpoint    <- file.path(project_dir, "hvi_scores_ca_year_endpoint.csv")
-out_hvi_composite   <- file.path(project_dir, "hvi_scores_ca_year_composite.csv")
-out_coef            <- file.path(project_dir, "hvi_model_coefficients.csv")
+legacy_out_dir <- HVI_PATHS$private_outputs$model_outputs
+hvi_dir_create(legacy_out_dir)
+out_cv_metrics      <- file.path(legacy_out_dir, "cv_metrics_by_endpoint.csv")
+out_cv_predictions  <- file.path(legacy_out_dir, "cv_predictions_all.csv")
+out_hvi_endpoint    <- file.path(legacy_out_dir, "hvi_scores_ca_year_endpoint.csv")
+out_hvi_composite   <- file.path(legacy_out_dir, "hvi_scores_ca_year_composite.csv")
+out_coef            <- file.path(legacy_out_dir, "hvi_model_coefficients.csv")
 
 # Cross-validation
 k_folds <- 5

@@ -12,12 +12,14 @@ suppressPackageStartupMessages({
   library(tidyr)
 })
 
+source(file.path(if (dir.exists("code")) "code" else ".", "00_config.R"))
+
 # -------------------------------------------------------------------------------------
 # File paths
 # -------------------------------------------------------------------------------------
 
-path_panel  <- "data/derived/community_day_panel_with_climate.csv"
-out_panel   <- "data/derived/community_day_panel_with_climate_causes.csv"
+path_panel  <- file.path(HVI_PATHS$private_outputs$derived, "community_day_panel_with_climate.csv")
+out_panel   <- file.path(HVI_PATHS$private_outputs$derived, "community_day_panel_with_climate_causes.csv")
 
 # -------------------------------------------------------------------------------------
 # Helpers
@@ -337,7 +339,7 @@ suppressPackageStartupMessages({
 # Output directory
 # -------------------------------------------------------------------------------------
 
-fig_dir <- "figures"
+fig_dir <- file.path(HVI_PATHS$private_outputs$publication_outputs, "exploratory_figures")
 dir.create(fig_dir, showWarnings = FALSE, recursive = TRUE)
 
 # -------------------------------------------------------------------------------------

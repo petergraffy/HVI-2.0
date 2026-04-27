@@ -361,6 +361,29 @@ Compare HVI 2.0 against:
 
 ---
 
+## Reproducibility and Public Exports
+
+This repository should be treated as code plus public aggregate outputs only. Raw and record-level EMS, ED, and mortality data should remain in the private Box-backed project directory configured by `HVI_PRIVATE_DIR`.
+
+Copy `.Renviron.example` to `.Renviron` and adjust paths as needed:
+
+```r
+HVI_BOX_DIR="C:/Users/Peter Graffy/Box/HVI2.0"
+HVI_PRIVATE_DIR="C:/Users/Peter Graffy/Box/HVI2.0"
+HVI_PUBLIC_EXPORT_DIR="public_exports"
+HVI_SUPPRESS_SMALL_CELLS=11
+```
+
+Build the dashboard/manuscript-safe export bundle with:
+
+```r
+source("code/11_build_public_exports.R")
+```
+
+The public-facing app should read from `public_exports/dashboard/` and `public_exports/manifest.json`, not from `data/`, `results/`, `code/results/`, or Box raw-data folders. See `docs/DATA_GOVERNANCE.md`, `docs/PUBLIC_EXPORT_CONTRACT.md`, and `docs/PIPELINE.md`.
+
+---
+
 ## Project Phases
 
 ### Phase 1: Data Engineering

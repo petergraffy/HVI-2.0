@@ -3,12 +3,13 @@
 # Prepare lightweight long and wide exports for a future interactive map/dashboard.
 # ================================================================================================
 
-source("09_utils_hvi.R")
+source(file.path(if (dir.exists("code")) "code" else ".", "00_config.R"))
+hvi_source("09_utils_hvi.R")
 
 # -----------------------------
 # CONFIG
 # -----------------------------
-project_dir <- getwd()
+project_dir <- HVI_PATHS$private
 out_dir <- ensure_output_dir(project_dir, "09_model_outputs")
 frontend_dir <- file.path(out_dir, "frontend_exports")
 dir.create(frontend_dir, showWarnings = FALSE, recursive = TRUE)

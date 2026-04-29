@@ -158,31 +158,6 @@ The dashboard should not read from `data/`, `results/`, `code/results/`, `code/0
 
 Public export details are documented in [docs/PUBLIC_EXPORT_CONTRACT.md](docs/PUBLIC_EXPORT_CONTRACT.md).
 
-## Reproducibility and Configuration
-
-Paths are centralized in [code/00_config.R](code/00_config.R). Copy `.Renviron.example` to `.Renviron` and adjust local paths as needed:
-
-```r
-HVI_BOX_DIR="C:/Users/Peter Graffy/Box/HVI2.0"
-HVI_PRIVATE_DIR="C:/Users/Peter Graffy/Box/HVI2.0"
-HVI_PUBLIC_EXPORT_DIR="public_exports"
-HVI_SUPPRESS_SMALL_CELLS=11
-```
-
-Build public dashboard and manuscript-safe exports with:
-
-```r
-source("code/11_build_public_exports.R")
-```
-
-Build scenario slider exports with:
-
-```r
-source("code/12_build_scenario_exports.R")
-```
-
-A conservative `targets` scaffold is provided in [_targets.R](_targets.R). It wraps the current script sequence while the project is migrated away from global R session state and toward explicit target return values.
-
 ## Data Governance
 
 This repository should contain code, documentation, manuscript figures/tables when appropriate, and public aggregate exports only. Raw health records and record-level standardized files must remain outside Git.

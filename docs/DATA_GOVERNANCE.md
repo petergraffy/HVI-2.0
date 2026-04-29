@@ -4,7 +4,7 @@ HVI 2.0 uses protected health data from EMS, ED, and mortality records. Treat th
 
 ## Storage Zones
 
-- Private raw data: `HVI_PRIVATE_DIR`, normally `C:/Users/Peter Graffy/Box/HVI2.0`.
+- Private raw data: `HVI_PRIVATE_DIR`, set locally in `.Renviron`.
 - Private derived data: `HVI_PRIVATE_DIR/derived`.
 - Private model outputs: `HVI_PRIVATE_DIR/09_model_outputs`.
 - Public exports: `HVI_PUBLIC_EXPORT_DIR`, normally `public_exports`.

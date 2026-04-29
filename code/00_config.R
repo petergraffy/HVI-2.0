@@ -22,8 +22,9 @@ hvi_env <- function(name, default = NULL) {
 }
 
 HVI_REPO_DIR <- hvi_find_repo_root()
+HVI_DEFAULT_PRIVATE_DIR <- file.path(Sys.getenv("USERPROFILE", unset = "~"), "Box", "HVI2.0")
 HVI_BOX_DIR <- normalizePath(
-  hvi_env("HVI_BOX_DIR", "C:/Users/Peter Graffy/Box/HVI2.0"),
+  hvi_env("HVI_BOX_DIR", HVI_DEFAULT_PRIVATE_DIR),
   winslash = "/",
   mustWork = FALSE
 )

@@ -32,6 +32,29 @@ Expected core files:
 - `frontend_daily_endpoint_long.csv`
 - `frontend_daily_wide.csv`
 
+## Scenario Slider Files
+
+The slider backend is exported under `public_exports/dashboard/scenarios/`.
+
+- `scenario_grid_endpoint.csv`: endpoint-specific predictions for combinations of temperature and NDVI change.
+- `scenario_grid_overall.csv`: overall HVI scenario scores and dominant endpoints.
+- `scenario_variable_metadata.csv`: slider ranges, units, and whether each variable is active in the current fitted models.
+- `scenario_baseline_values.csv`: baseline community-area values used to anchor delta sliders.
+
+Current controls:
+
+- `temperature_f`: active; scored through endpoint-specific MRT and lag windows.
+- `ndvi_delta`: active when endpoint models include `z_ndvi`; interpreted as an association-based scenario, not a causal effect.
+- `humidity_scenario`: included in metadata; only changes predictions after models are fit with humidity terms.
+
+Temperature is displayed in Fahrenheit but converted to Celsius for model scoring because the fitted MRT/heat-dose artifacts are Celsius-based. Endpoint rows include `heat_dose_capped` and `prediction_capped_for_display`; the app should use the 0-100 score fields for visual comparison and show a model-boundary note when either cap flag is true.
+
+Build scenario exports with:
+
+```r
+source("code/12_build_scenario_exports.R")
+```
+
 Run:
 
 ```r

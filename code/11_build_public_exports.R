@@ -55,6 +55,20 @@ for (src in dashboard_geojson) {
   file.copy(src, file.path(dashboard_dst, basename(src)), overwrite = TRUE)
 }
 
+scenario_src_dirs <- c(
+  file.path(HVI_PATHS$private_outputs$model_outputs, "scenario_exports"),
+  file.path(HVI_PATHS$repo, "public_exports", "dashboard", "scenarios")
+)
+scenario_src_dirs <- scenario_src_dirs[dir.exists(scenario_src_dirs)]
+if (length(scenario_src_dirs) > 0) {
+  scenario_dst <- file.path(dashboard_dst, "scenarios")
+  hvi_dir_create(scenario_dst)
+  scenario_csv <- list.files(scenario_src_dirs[1], pattern = "\\.csv$", full.names = TRUE)
+  for (src in scenario_csv) {
+    copy_public_csv(src, file.path(scenario_dst, basename(src)))
+  }
+}
+
 model_public <- list.files(
   HVI_PATHS$private_outputs$model_outputs,
   pattern = "^(09a_endpoint_model_performance|09b_endpoint_weights|09c_temperature_grid_overall_risk|09c_temperature_grid_endpoint_risk|09d_ca_day_overall_operational_hvi)\\.csv$",
@@ -104,7 +118,7 @@ manifest_lines <- c(
   paste0('    "manuscript": ', json_escape(manuscript_dst)),
   "  },",
   '  "files": {',
-  paste0('    "dashboard": ', json_array(basename(list.files(dashboard_dst, full.names = FALSE))), ","),
+  paste0('    "dashboard": ', json_array(list.files(dashboard_dst, recursive = TRUE, full.names = FALSE)), ","),
   paste0('    "aggregate": ', json_array(basename(list.files(aggregate_dst, full.names = FALSE))), ","),
   paste0('    "manuscript": ', json_array(list.files(manuscript_dst, recursive = TRUE, full.names = FALSE))),
   "  }",

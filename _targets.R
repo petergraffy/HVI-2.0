@@ -48,5 +48,11 @@ list(
     public_exports,
     tar_script_step("code/11_build_public_exports.R")(),
     cue = tar_cue(mode = "always")
+  ),
+
+  tar_target(
+    scenario_exports,
+    tar_script_step("code/12_build_scenario_exports.R")(),
+    cue = tar_cue(mode = "always")
   )
 )

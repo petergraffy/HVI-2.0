@@ -1,371 +1,166 @@
-
-# Chicago Health-Informed Heat Vulnerability Index (HVI) 2.0
+# Chicago Health-Informed Heat Vulnerability Index 2.0
 
 **PI:** Peter Graffy  
-**Project Type:** Spatiotemporal Environmental Health Modeling  
-**Scope:** Chicago, IL (Community Area–level primary geography)  
-
----
+**Institution:** University of Chicago, Center for Computational Medicine and Clinical AI  
+**Project type:** Spatiotemporal environmental health modeling and public decision-support tool  
+**Primary geography:** Chicago community areas  
+**Primary temporal unit:** Community area-day, warm season
 
 ## Overview
 
-The **Health-Informed Heat Vulnerability Index (HVI) 2.0** is a next-generation, multi-endpoint framework designed to quantify neighborhood-level health risk associated with extreme heat in Chicago.
+The Chicago Health-Informed Heat Vulnerability Index 2.0 (HVI 2.0) is a next-generation heat vulnerability framework for estimating neighborhood-level health risk during extreme heat. The project is designed to support both a scientific manuscript and a public-facing dashboard/map for Chicago.
 
-Unlike traditional vulnerability indices based solely on socioeconomic characteristics, HVI 2.0 is explicitly **calibrated to observed health outcomes**, integrating:
+Most heat vulnerability indices are built from static social, demographic, housing, and environmental indicators. HVI 2.0 takes a different approach: it calibrates vulnerability to observed health outcomes. The index integrates emergency medical services calls, emergency department visits, and mortality records to estimate where heat is most likely to translate into measurable health burden.
 
-- Emergency Department (ED) visits  
-- Mortality  
-- Emergency Medical Services (EMS) calls  
-- (Optional) ICU admissions via CLIF  
+The core scientific target is expected excess health burden under heat conditions, not raw outcome rates. This distinction matters because high baseline utilization or mortality alone does not necessarily identify heat-specific vulnerability.
 
-The framework estimates **heat-attributable health burden**, models **spatial heterogeneity in vulnerability**, and projects **future risk under climate change scenarios** using downscaled temperature data.
+## Scientific Aims
 
----
+1. Estimate historical heat-health relationships across EMS, ED, and mortality endpoints.
+2. Identify community areas where health burden increases disproportionately during heat.
+3. Construct a multi-endpoint, health-informed vulnerability index.
+4. Produce endpoint-specific and composite risk scores for mapping and public communication.
+5. Evaluate how environmental and structural covariates, such as greenness and air conditioning access, modify predicted heat-related health burden.
+6. Provide dashboard-ready scenario outputs so users can explore how temperature and modifiable covariates may affect endpoint-specific risk.
 
-## Core Objectives
-
-1. **Quantify historical heat-health relationships** across multiple endpoints  
-2. **Estimate neighborhood-specific vulnerability** to heat exposure  
-3. **Construct a multi-endpoint composite vulnerability index**  
-4. **Project future heat-related health burden** under climate scenarios  
-5. **Validate index performance against observed heat events**
-
----
-
-## Data Sources
+## Data Streams
 
 ### Health Outcomes
 
-| Source | Years | Description |
-|------|------|------------|
-| CAPriCORN | 2011–2022 | ED visits across Chicago health systems |
-| CDPH Mortality | 1993–2022 | Death records (all-cause and cause-specific) |
-| EMS | ~2018–2023 | Emergency medical service calls |
-| CLIF (optional) | TBD | ICU admissions and severe illness endpoints |
+| Source | Approximate Years | Role |
+| --- | --- | --- |
+| CAPriCORN emergency department records | 2011-2022 | Acute care utilization and cause-specific ED outcomes |
+| Chicago mortality records | 1993-2022 | All-cause and cause-specific mortality outcomes |
+| Chicago EMS records | 2018-2023 | Pre-hospital acute health events and syndromic response |
+| CLIF ICU data | Optional extension | Severe illness validation or added endpoint layer |
 
----
+All record-level health data are treated as private data. Public-facing exports are aggregated to community-area level and must not contain direct identifiers, addresses, narratives, coordinates, encounter IDs, or other record-level fields.
 
 ### Environmental Exposure
 
-- **Daymet** (historical daily temperature)
-- **Downscaled climate projections** (QDM / Earthmover dataset)
+The primary historical heat exposure is daily maximum temperature from Daymet, harmonized to Chicago community areas. The current model matrix uses Celsius-scale temperature features internally. Public dashboard controls can display Fahrenheit, but backend scoring converts Fahrenheit to Celsius before applying model terms.
 
----
+Other exposure or adaptive-capacity inputs include humidity where available, NDVI, PM2.5, NO2, and air-conditioning probability.
 
-### Covariates
+### Structural Vulnerability Covariates
 
-#### Structural Vulnerability
-- Age distribution  
-- Socioeconomic status  
-- Race/ethnicity  
-- Housing characteristics  
-- Insurance coverage  
+The model matrix includes community-area-year covariates representing:
 
-#### Baseline Health Burden
-- Chronic disease prevalence  
-- Prior healthcare utilization  
-- Frailty proxies  
+- age structure
+- race and ethnicity
+- income, education, employment, and poverty
+- housing burden and household composition
+- vehicle access, insurance, internet access, and social vulnerability indicators
+- NDVI and other built or natural environment measures
+- air conditioning probability
+- air pollution burden
 
-#### Built Environment / Adaptive Capacity
-- Tree canopy  
-- Impervious surface  
-- Green space  
-- Housing age  
-- Cooling access proxies  
+Candidate covariates are screened and selected using a combination of missingness checks, correlation pruning, random forest importance, and interaction-aware generalized additive models.
 
----
+## Spatial and Temporal Design
 
-## Spatial and Temporal Resolution
+The primary analytic unit is the Chicago community area by day. The main HVI modeling window currently emphasizes the 2019-2022 overlap period, when EMS, ED, mortality, climate, and baseline covariate data are jointly available. Warm-season analyses are prioritized because the target estimand is heat-related health burden.
 
-- **Primary unit:** Community Area × Day  
-- **Secondary analyses:** Census tract (sensitivity)  
-- **Temporal scope:** Warm season (May–September primary)  
+The project is structured to support future sensitivity analyses at alternative spatial resolutions or under future climate scenarios.
 
----
+## Endpoint Families
 
-## Exposure Definition
+HVI 2.0 models three broad endpoint families:
 
-Multiple complementary heat metrics will be used:
+- **Mortality:** all-cause, cardiovascular, respiratory, renal, neurologic, mental health, gastrointestinal, injury, and other heat-sensitive categories.
+- **Emergency department visits:** all-cause and cause-specific acute care outcomes including cardiovascular, respiratory, renal, dehydration, heat illness, injury, syncope, neurologic, mental health, and gastrointestinal visits.
+- **EMS calls:** all-cause and syndromic EMS outcomes including cardiovascular, respiratory, syncope, neurologic, mental health, injury, gastrointestinal, bleeding, and heat-related calls.
 
-- Daily max temperature (Tmax)  
-- Daily mean temperature  
-- Heat index / apparent temperature  
-- Heatwave indicators (duration, intensity)  
-- Early vs late season heat  
-- Consecutive hot days  
-- Lagged exposure (0–10 days depending on endpoint)  
+The endpoint dictionary is maintained in [docs/ENDPOINT_DICTIONARY.md](docs/ENDPOINT_DICTIONARY.md).
 
----
+## Modeling Framework
 
-## Outcomes
+### 1. Outcome Harmonization
 
-### Mortality
-- All-cause  
-- Cardiovascular  
-- Respiratory  
-- Heat-related (if coded)
+Raw EMS, ED, and mortality records are standardized to a common event date and community-area geography. Cause-specific indicators are then derived from diagnosis codes, underlying cause of death codes, or EMS symptom/impression fields. Daily community-area panels are generated for all-cause and endpoint-specific counts.
 
-### Emergency Department
-- All-cause visits  
-- Heat illness  
-- Dehydration  
-- Renal injury  
-- Cardiovascular  
-- Respiratory  
+Record-level standardized files are private working artifacts only. Aggregate panels and public exports are the safe downstream products.
 
-### EMS Calls
-- All calls  
-- Heat-related dispatch  
-- Cardiopulmonary  
-- Syncope / collapse  
-- Altered mental status  
+### 2. Minimum-Risk Temperature and Heat Dose
 
-### ICU (Optional)
-- ICU admission  
-- Mechanical ventilation  
-- Vasopressor use  
-- Acute respiratory failure  
+Endpoint-specific temperature-response relationships are estimated to identify minimum-risk temperatures (MRTs) and relevant lag windows. Heat dose is then defined as cumulative excess temperature above the endpoint-specific MRT over the endpoint's lag window.
 
----
+This design allows different health endpoints to have different heat thresholds and lag structures. For example, EMS and ED endpoints may respond over shorter windows, while mortality endpoints may require longer distributed lag structures.
 
-## Analytical Framework
+### 3. Endpoint-Specific Health Models
 
-### Key Principle
+Endpoint models are fit using generalized additive modeling machinery with count-family likelihoods. The production HVI model uses endpoint-specific outcome counts as the response, heat dose as the primary exposure term, selected vulnerability covariates, and heat-dose-by-covariate interaction terms.
 
-The index is based on **heat-attributable burden**, not raw outcome rates.
+Core adjustment variables include seasonal timing, day of week, year, and population offset where available. Model outputs include fitted endpoint models, coefficients, interaction terms, cross-validation predictions, and endpoint-level performance summaries.
 
----
+### 4. Variable Selection and Effect Modification
 
-## Modeling Strategy
+The vulnerability modeling pipeline screens candidate structural and environmental covariates in stages:
 
-Two complementary modeling approaches will be implemented and compared.
+1. Drop variables with excessive missingness or near-zero variance.
+2. Use random forest screening to identify variables that improve endpoint prediction.
+3. Fit interaction-aware GAMs to estimate whether covariates modify heat-dose response.
+4. Rank variables by predictive signal, interaction strength, sign consistency, and redundancy.
+5. Apply correlation pruning to keep a smaller, interpretable final covariate set.
 
----
+This produces endpoint-specific and cross-endpoint covariate sets for structural vulnerability scoring.
 
-### Approach 1: DLNM + Second-Stage Pooling (Primary)
+### 5. Structural Vulnerability Scoring
 
-#### Stage 1: Endpoint-Specific Models
+For each community area and year, endpoint-specific vulnerability scores are computed from selected covariates and their heat interaction coefficients. These endpoint scores are combined into family-level and overall structural HVI scores.
 
-- Model: Generalized Additive Models (GAMs) with DLNM
-- Family: Quasi-Poisson / Negative Binomial
-- Exposure: Cross-basis temperature functions
-- Lag structure:
-  - ED / EMS: 0–5 days  
-  - Mortality: 0–10 days  
+The structural score answers:
 
-#### Adjustments
+> Which communities have baseline characteristics associated with greater heat-sensitive health risk?
 
-- Long-term time trends  
-- Seasonality  
-- Day of week  
-- Holidays  
-- Humidity (if available)  
-- Autocorrelation structures  
+### 6. Temperature and Operational Risk Scoring
 
----
+The pipeline also scores risk across temperature scenarios and observed daily heat conditions. For each community area, endpoint, and temperature scenario, fitted models estimate predicted counts, reference counts, excess events, relative risk, endpoint risk, family risk, and overall risk.
 
-#### Stage 2: Hierarchical Pooling
+The operational score answers:
 
-- Estimate spatial heterogeneity across community areas  
-- Model variation in heat-response curves  
-- Regress heterogeneity on neighborhood covariates  
-- Use mixed-effects or Bayesian meta-regression  
+> Given a specific heat scenario or observed day, which communities are expected to experience the largest heat-related health burden?
 
----
+### 7. Scenario Slider Backend
 
-### Approach 2: Bayesian Spatiotemporal Hierarchical Model (Secondary)
+The dashboard backend includes precomputed scenario exports for user controls:
 
-A unified model incorporating:
+- temperature in degrees Fahrenheit
+- NDVI change relative to baseline
+- humidity metadata, currently inactive unless endpoint models are refit with humidity terms
 
-- Poisson / Negative Binomial likelihood  
-- Nonlinear temperature-response functions  
-- Distributed lag structure  
-- Spatial random effects  
-- Temporal random effects  
-- Area-level effect modification  
+Scenario exports are generated by [code/12_build_scenario_exports.R](code/12_build_scenario_exports.R). The script converts Fahrenheit to Celsius for model scoring, caps heat dose at endpoint-specific observed support, and marks model-boundary rows using `heat_dose_capped` and `prediction_capped_for_display`.
 
-Potential implementations:
-
-- **INLA (SPDE)**  
-- **brms / Stan**  
-
----
-
-### Comparison Between Approaches
-
-We will evaluate:
-
-- Predictive performance  
-- Stability of estimates  
-- Interpretability  
-- Computational efficiency  
-- Spatial smoothness vs overfitting  
-
----
-
-## Heat-Attributable Burden Estimation
-
-For each endpoint and geography:
-
-- Baseline outcome rate  
-- Exposure-response function  
-- Lagged effects  
-- Attributable number of events  
-- Attributable rate per 100,000  
-
----
-
-## Index Construction
-
-### Definition
-
-HVI 2.0 represents:
-
-> Expected excess health burden under standardized heat conditions.
-
----
-
-### Strategy A: Transparent Composite (Primary)
-
-1. Standardize endpoint-specific attributable risks  
-2. Apply weights based on:
-   - Severity  
-   - Reliability  
-   - Public health relevance  
-3. Combine into composite score  
-
----
-
-### Strategy B: Latent Index (Secondary)
-
-- Hierarchical Bayesian model combining endpoints  
-- Derive latent “heat vulnerability” factor  
-
----
-
-### Outputs
-
-- Composite score  
-- Percentile ranking  
-- Domain-specific sub-scores:
-  - Mortality burden  
-  - Acute care burden  
-  - EMS burden  
-  - (Optional) ICU burden  
-
----
-
-## Climate Projection Framework
-
-### Pipeline
-
-1. Fit historical exposure-response relationships  
-2. Input projected daily temperatures  
-3. Generate future heat metrics  
-4. Estimate future attributable burden  
-
----
-
-### Scenarios
-
-- Climate-only change  
-- Climate + demographic shifts  
-- Climate + adaptation improvements  
-- Climate + worsening inequities  
-
----
-
-### Outputs
-
-- Future attributable events  
-- Change from baseline  
-- Extreme event burden projections  
-
----
+For public visualization, the app should use the 0-100 score fields rather than interpreting scenario predicted counts as causal estimates. NDVI slider effects are association-based scenarios, not causal intervention estimates.
 
 ## Validation Strategy
 
-### Internal Validation
+The validation framework includes:
 
-- Train/test split across years  
-- Leave-one-year-out validation  
-- Leave-one-community-area-out validation  
+- spatial cross-validation by held-out community areas
+- temporal validation by held-out years
+- endpoint-specific predictive performance summaries
+- comparison of high-HVI areas against observed heat-event burden
+- evaluation of targeting efficiency, such as the share of health burden captured in the highest-risk communities
+- comparison against traditional socioeconomic-only vulnerability indices
 
----
+Performance artifacts are exported for manuscript tables and dashboard metadata.
 
-### Endpoint Validation
+## Public Dashboard Exports
 
-Evaluate whether high-index areas show:
+Dashboard-safe files are generated under `public_exports/`. The public application should read from:
 
-- Higher excess ED visits  
-- Higher excess mortality  
-- Higher EMS surge during heat events  
+- `public_exports/dashboard/`
+- `public_exports/dashboard/scenarios/`
+- `public_exports/manifest.json`
 
----
+The dashboard should not read from `data/`, `results/`, `code/results/`, `code/09_model_outputs/`, or private Box folders.
 
-### Event-Based Validation
+Public export details are documented in [docs/PUBLIC_EXPORT_CONTRACT.md](docs/PUBLIC_EXPORT_CONTRACT.md).
 
-- Test performance during major Chicago heatwaves  
-- Compare predicted vs observed burden  
+## Reproducibility and Configuration
 
----
-
-### Comparative Validation
-
-Compare HVI 2.0 against:
-
-- HVI 1.0  
-- Socioeconomic-only indices  
-- Individual covariates (e.g., poverty, age)  
-
----
-
-### Policy-Relevant Validation
-
-- Proportion of total burden captured in top decile areas  
-- Targeting efficiency vs baseline strategies  
-
----
-
-## Outputs
-
-### 1. Epidemiologic Results
-- Exposure-response curves  
-- Lag structures  
-- Effect modification  
-
-### 2. Attributable Burden Maps
-- Events per year  
-- Rates per population  
-
-### 3. HVI 2.0 Maps
-- Composite index  
-- Subdomain indices  
-- Uncertainty estimates  
-
-### 4. Future Projection Maps
-- Scenario-based risk  
-- Temporal trends  
-
----
-
-## Implementation Stack
-
-- `targets` – pipeline orchestration  
-- `data.table` / `arrow` – scalable data processing  
-- `sf` / `terra` / `exactextractr` – spatial analysis  
-- `mgcv` – GAM modeling  
-- `dlnm` – distributed lag models  
-- `glmmTMB` – mixed models  
-- `INLA` / `brms` – Bayesian modeling  
-
----
-
-## Reproducibility and Public Exports
-
-This repository should be treated as code plus public aggregate outputs only. Raw and record-level EMS, ED, and mortality data should remain in the private Box-backed project directory configured by `HVI_PRIVATE_DIR`.
-
-Copy `.Renviron.example` to `.Renviron` and adjust paths as needed:
+Paths are centralized in [code/00_config.R](code/00_config.R). Copy `.Renviron.example` to `.Renviron` and adjust local paths as needed:
 
 ```r
 HVI_BOX_DIR="C:/Users/Peter Graffy/Box/HVI2.0"
@@ -374,76 +169,34 @@ HVI_PUBLIC_EXPORT_DIR="public_exports"
 HVI_SUPPRESS_SMALL_CELLS=11
 ```
 
-Build the dashboard/manuscript-safe export bundle with:
+Build public dashboard and manuscript-safe exports with:
 
 ```r
 source("code/11_build_public_exports.R")
 ```
 
-The public-facing app should read from `public_exports/dashboard/` and `public_exports/manifest.json`, not from `data/`, `results/`, `code/results/`, or Box raw-data folders. See `docs/DATA_GOVERNANCE.md`, `docs/PUBLIC_EXPORT_CONTRACT.md`, and `docs/PIPELINE.md`.
+Build scenario slider exports with:
 
----
+```r
+source("code/12_build_scenario_exports.R")
+```
 
-## Project Phases
+A conservative `targets` scaffold is provided in [_targets.R](_targets.R). It wraps the current script sequence while the project is migrated away from global R session state and toward explicit target return values.
 
-### Phase 1: Data Engineering
-- Harmonize spatial units  
-- Construct panel dataset  
-- Assign exposures  
-- Define outcomes  
+## Data Governance
 
-### Phase 2: Endpoint Modeling
-- Fit DLNM models  
-- Estimate attributable burden  
+This repository should contain code, documentation, manuscript figures/tables when appropriate, and public aggregate exports only. Raw health records and record-level standardized files must remain outside Git.
 
-### Phase 3: Spatial Vulnerability Modeling
-- Estimate heterogeneity  
-- Identify modifiers  
+The `.gitignore` excludes private data, generated model outputs, large artifacts, and record-level health files. Additional governance notes are in [docs/DATA_GOVERNANCE.md](docs/DATA_GOVERNANCE.md).
 
-### Phase 4: Index Construction
-- Build composite index  
-- Compare methodologies  
+## Key Documentation
 
-### Phase 5: Climate Projections
-- Apply future temperature scenarios  
+- [docs/README.md](docs/README.md): documentation map for analysts, collaborators, and dashboard developers
+- [docs/DATA_GOVERNANCE.md](docs/DATA_GOVERNANCE.md): private data handling, public-release checklist, and Git safety rules
+- [docs/PUBLIC_EXPORT_CONTRACT.md](docs/PUBLIC_EXPORT_CONTRACT.md): dashboard file contract and scenario slider outputs
+- [docs/PIPELINE.md](docs/PIPELINE.md): current pipeline stages and migration plan
+- [docs/ENDPOINT_DICTIONARY.md](docs/ENDPOINT_DICTIONARY.md): endpoint names and families
 
-### Phase 6: Validation and Deployment
-- Validate against observed events  
-- Produce maps and dashboards  
+## Scientific Contribution
 
----
-
-## Optional Extension: ICU / CLIF Integration
-
-If feasible:
-
-- Incorporate ICU admissions and severe illness  
-- Evaluate as:
-  - Additional endpoint  
-  - Validation layer  
-  - Separate analysis  
-
----
-
-## Expected Contribution
-
-HVI 2.0 moves beyond traditional indices by:
-
-- Directly linking heat exposure to **observed health outcomes**  
-- Integrating **multiple healthcare system signals**  
-- Capturing **spatiotemporal heterogeneity**  
-- Enabling **future climate risk projections**  
-
----
-
-## Contact
-
-**Peter Graffy**  
-University of Chicago  
-Center for Computational Medicine & Clinical AI  
-
-
-
-
-
-
+HVI 2.0 advances heat vulnerability mapping by linking neighborhood risk directly to observed health outcomes across pre-hospital care, emergency care, and mortality. It provides both a manuscript-ready epidemiologic framework and a dashboard-ready public health tool for comparing structural vulnerability, temperature-driven risk, endpoint composition, and modifiable scenario inputs across Chicago communities.

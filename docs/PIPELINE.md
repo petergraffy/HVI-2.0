@@ -8,6 +8,7 @@ The repository now has a first `targets` scaffold in `_targets.R`. It is intenti
 2. `climate_panel`: standardizes Daymet and joins climate to the community-day panel.
 3. `baseline_vulnerability`: builds community-area-year structural vulnerability covariates.
 4. `public_exports`: creates public dashboard/manuscript-safe outputs.
+5. `scenario_exports`: creates precomputed dashboard slider outputs for temperature and NDVI scenarios.
 
 ## Run
 

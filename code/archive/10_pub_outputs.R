@@ -59,13 +59,13 @@ dir.create(sup_dir, recursive = TRUE, showWarnings = FALSE)
 target_year <- 2022
 
 # publication temperatures in Fahrenheit; will be converted if grid is Celsius
-target_temps_f <- c(85, 92, 100)
+target_temps_f <- c(85, 91, 97)
 
 # choose a small endpoint panel for faceted maps if needed
 selected_endpoint_maps <- c(
-  "deaths", "death_cvd", "death_respiratory",
-  "ed_visits", "ed_cvd", "ed_respiratory",
-  "ems_calls", "ems_cvd", "ems_respiratory"
+  "deaths", "death_cvd", "death_renal", "death_injury",
+  "ed_visits", "ed_cvd", "ed_respiratory", "ed_injury",
+  "ems_calls", "ems_cvd", "ems_respiratory", "ems_injury"
 )
 
 base_size <- 11
@@ -143,18 +143,23 @@ harmonize_year_values <- function(x) {
 }
 
 normalize_community_key <- function(x) {
-  x %>%
+  out <- x %>%
     as.character() %>%
-    str_to_upper() %>%
-    str_replace_all("&", "AND") %>%
-    str_replace_all("[[:punct:]]", " ") %>%
-    str_squish() %>%
-    dplyr::recode(
-      "O HARE" = "OHARE",
-      "OHARE" = "OHARE",
-      "MCKINLEY PARK" = "MCKINLEY PARK",
-      .default = .
-    )
+    stringr::str_to_upper() %>%
+    stringr::str_replace_all("&", "AND") %>%
+    stringr::str_replace_all("[[:punct:]]", " ") %>%
+    stringr::str_squish()
+  
+  out <- dplyr::case_when(
+    out %in% c("O HARE", "OHARE") ~ "OHARE",
+    out %in% c("MCKINLEY PARK") ~ "MCKINLEY PARK",
+    out %in% c("NEAR WEST SIDE") ~ "NEAR WEST SIDE",
+    out %in% c("NEAR NORTH SIDE") ~ "NEAR NORTH SIDE",
+    out %in% c("NEAR SOUTH SIDE") ~ "NEAR SOUTH SIDE",
+    TRUE ~ out
+  )
+  
+  out
 }
 
 label_community_pretty <- function(x) {
@@ -216,15 +221,18 @@ get_temp_col <- function(df) {
 }
 
 get_endpoint_risk_col <- function(df) {
-  get_first_match(df, "^endpoint_risk_0_100$|endpoint.*risk.*0_100|risk_0_100")
+  if ("endpoint_risk_0_100" %in% names(df)) return("endpoint_risk_0_100")
+  stop("Expected endpoint_risk_0_100 in dataframe, but it was not found.")
 }
 
 get_overall_risk_col <- function(df) {
-  get_first_match(df, "^overall_risk_0_100$|overall.*risk.*0_100|overall_risk")
+  if ("overall_risk_0_100" %in% names(df)) return("overall_risk_0_100")
+  stop("Expected overall_risk_0_100 in dataframe, but it was not found.")
 }
 
 get_structural_col <- function(df) {
-  get_first_match(df, "overall_structural_0_100|overall.*0_100|hvi_0_100|vulnerability_0_100")
+  if ("overall_structural_0_100" %in% names(df)) return("overall_structural_0_100")
+  stop("Expected overall_structural_0_100 in dataframe, but it was not found.")
 }
 
 get_excess_col <- function(df) {
@@ -246,8 +254,8 @@ safe_weighted_mean <- function(x, w) {
 }
 
 infer_map_sf <- function() {
-  if (exists("cas", inherits = TRUE)) {
-    obj <- get("cas", inherits = TRUE)
+  if (exists("ca", inherits = TRUE)) {
+    obj <- get("ca", inherits = TRUE)
     if (inherits(obj, "sf")) return(obj)
   }
   if (exists("commareas", inherits = TRUE)) {
@@ -283,28 +291,18 @@ standardize_map_key <- function(sf_obj) {
 }
 
 make_choropleth <- function(sf_df, value_col, title, subtitle = NULL, fill_label = NULL,
-                            palette_option = "C", na_fill = "grey90") {
+                            na_fill = "grey90") {
   ggplot(sf_df) +
     geom_sf(aes(fill = .data[[value_col]]), color = "white", linewidth = 0.15) +
     coord_sf(expand = FALSE) +
-    scale_fill_viridis_c(
-      option = palette_option,
-      na.value = na_fill,
-      labels = scales::label_number(accuracy = 1),
-      name = fill_label %||% value_col
-    ) +
+    scale_fill_hvi_0_100(fill_label %||% value_col) +
+    wide_colorbar +
     labs(
       title = title,
       subtitle = subtitle,
       caption = "Chicago community areas"
     ) +
-    theme_pub(base_size = base_size) +
-    theme(
-      axis.text = element_blank(),
-      axis.title = element_blank(),
-      axis.ticks = element_blank(),
-      panel.grid = element_blank()
-    )
+    theme_pub_map(base_size = base_size)
 }
 
 make_categorical_map <- function(sf_df, value_col, title, subtitle = NULL) {
@@ -326,6 +324,65 @@ make_categorical_map <- function(sf_df, value_col, title, subtitle = NULL) {
       legend.position = "bottom"
     )
 }
+
+scale_fill_hvi_0_100 <- function(name) {
+  scale_fill_viridis_c(
+    option = "C",
+    limits = c(0, 100),
+    breaks = c(0, 25, 50, 75, 100),
+    labels = scales::label_number(accuracy = 1),
+    oob = scales::squish,
+    name = name
+  )
+}
+
+theme_pub_map_shared_legend <- function(base_size = 11) {
+  theme_pub(base_size = base_size) +
+    theme(
+      axis.text = element_blank(),
+      axis.title = element_blank(),
+      axis.ticks = element_blank(),
+      panel.grid = element_blank(),
+      legend.position = "bottom",
+      legend.title = element_text(face = "bold", size = base_size + 1),
+      legend.text = element_text(size = base_size),
+      legend.key.width = unit(1.8, "cm"),
+      legend.key.height = unit(0.5, "cm")
+    )
+}
+
+wide_colorbar <- guides(
+  fill = guide_colorbar(
+    barwidth = unit(12, "cm"),
+    barheight = unit(0.7, "cm"),
+    title.position = "top",
+    title.hjust = 0.5
+  )
+)
+
+theme_pub_map <- function(base_size = 11) {
+  theme_pub(base_size = base_size) +
+    theme(
+      axis.text = element_blank(),
+      axis.title = element_blank(),
+      axis.ticks = element_blank(),
+      panel.grid = element_blank(),
+      legend.position = "bottom",
+      legend.title = element_text(face = "bold", size = base_size + 1),
+      legend.text = element_text(size = base_size),
+      legend.key.width = unit(1.5, "cm"),
+      legend.key.height = unit(0.6, "cm")
+    )
+}
+
+wide_colorbar <- guides(
+  fill = guide_colorbar(
+    barwidth = unit(10, "cm"),
+    barheight = unit(0.7, "cm"),
+    title.position = "top",
+    title.hjust = 0.5
+  )
+)
 
 # ------------------------------------------------------------------------------------------------
 # REQUIRED OBJECTS
@@ -393,6 +450,10 @@ chi_sf <- infer_map_sf() %>%
   standardize_map_key() %>%
   st_as_sf() %>%
   st_make_valid()
+
+message("O'Hare in map object: ", "OHARE" %in% chi_sf$community)
+if (have_temp_overall) message("O'Hare in temp_overall: ", "OHARE" %in% temp_overall$community)
+if (have_temp_endpoint) message("O'Hare in temp_ep: ", "OHARE" %in% temp_ep$community)
 
 # ------------------------------------------------------------------------------------------------
 # STANDARDIZE KEYS AND YEARS
@@ -486,6 +547,56 @@ if (have_daily_ep && have_meta && !"outcome_label" %in% names(daily_ep)) {
 }
 
 # ------------------------------------------------------------------------------------------------
+# DIAGNOSTICS: O'Hare and temperature coverage
+# ------------------------------------------------------------------------------------------------
+diag_ohare <- tibble(
+  dataset = c(
+    "chi_sf",
+    if (exists("hvi_model_matrix")) "hvi_model_matrix" else NULL,
+    if (exists("temp_overall")) "temp_overall" else NULL,
+    if (exists("temp_ep")) "temp_ep" else NULL
+  ),
+  has_ohare = c(
+    "OHARE" %in% chi_sf$community,
+    if (exists("hvi_model_matrix")) "OHARE" %in% hvi_model_matrix$community else NA,
+    if (exists("temp_overall")) "OHARE" %in% temp_overall$community else NA,
+    if (exists("temp_ep")) "OHARE" %in% temp_ep$community else NA
+  )
+)
+
+safe_write_csv(diag_ohare, file.path(tab_dir, "diagnostic_ohare_presence.csv"))
+
+if (have_temp_overall) {
+  diag_temp_overall <- temp_overall %>%
+    count(temperature, name = "n_rows") %>%
+    arrange(temperature)
+  safe_write_csv(diag_temp_overall, file.path(tab_dir, "diagnostic_temp_overall_temperature_counts.csv"))
+}
+
+if (have_temp_endpoint) {
+  diag_temp_ep <- temp_ep %>%
+    count(temperature, name = "n_rows") %>%
+    arrange(temperature)
+  safe_write_csv(diag_temp_ep, file.path(tab_dir, "diagnostic_temp_endpoint_temperature_counts.csv"))
+}
+
+if (have_temp_overall) {
+  diag_ohare_temp_overall <- temp_overall %>%
+    filter(community == "OHARE") %>%
+    count(temperature, name = "n_rows") %>%
+    arrange(temperature)
+  safe_write_csv(diag_ohare_temp_overall, file.path(tab_dir, "diagnostic_ohare_temp_overall.csv"))
+}
+
+if (have_temp_endpoint) {
+  diag_ohare_temp_ep <- temp_ep %>%
+    filter(community == "OHARE") %>%
+    count(temperature, endpoint_key, name = "n_rows") %>%
+    arrange(temperature, endpoint_key)
+  safe_write_csv(diag_ohare_temp_ep, file.path(tab_dir, "diagnostic_ohare_temp_endpoint.csv"))
+}
+
+# ------------------------------------------------------------------------------------------------
 # TEMPERATURE SETUP
 # ------------------------------------------------------------------------------------------------
 temp_units <- case_when(
@@ -512,7 +623,7 @@ if (have_temp_overall) {
 target_temp_lookup <- target_temp_lookup %>%
   mutate(
     matched_native = purrr::map_dbl(target_native, ~ closest_available_temperature(available_temps, .x)),
-    matched_f = if_else(temp_units == "C", c_to_f(matched_native), matched_native)
+    matched_f = if (temp_units == "C") c_to_f(matched_native) else matched_native
   )
 
 safe_write_csv(target_temp_lookup, file.path(tab_dir, "temperature_targets_lookup.csv"))
@@ -657,12 +768,21 @@ if (have_driver_temp) {
     select(community, year, any_of(all_z_vars)) %>%
     distinct()
   
+  community_year_z_long <- community_year_z %>%
+    pivot_longer(
+      cols = all_of(all_z_vars),
+      names_to = "variable",
+      values_to = "z_value"
+    ) %>%
+    distinct(community, year, variable, .keep_all = TRUE)
+  
   endpoint_driver_base <- ep_betas %>%
     filter(variable %in% all_z_vars) %>%
+    distinct(endpoint_key, variable, beta_interaction, .keep_all = TRUE) %>%
     left_join(
-      community_year_z %>%
-        pivot_longer(cols = all_of(all_z_vars), names_to = "variable", values_to = "z_value"),
-      by = c("variable", "community", "year")
+      community_year_z_long,
+      by = "variable",
+      relationship = "many-to-many"
     ) %>%
     mutate(
       base_driver_contribution = z_value * beta_interaction
@@ -674,16 +794,20 @@ if (have_driver_temp) {
       excess_events, endpoint_risk_0_100,
       outcome_label, source, domain
     ) %>%
+    distinct(community, year, temperature, endpoint_key, .keep_all = TRUE) %>%
     left_join(
-      ep_weights %>% select(endpoint_key, endpoint_weight),
+      ep_weights %>% select(endpoint_key, endpoint_weight) %>% distinct(),
       by = "endpoint_key"
     ) %>%
-    mutate(endpoint_weight = coalesce(endpoint_weight, 1))
+    mutate(
+      endpoint_weight = coalesce(endpoint_weight, 1)
+    )
   
   driver_temp_long <- endpoint_driver_base %>%
     left_join(
       endpoint_excess_temp,
-      by = c("community", "year", "endpoint_key")
+      by = c("community", "year", "endpoint_key"),
+      relationship = "many-to-many"
     ) %>%
     mutate(
       weighted_driver_contribution = base_driver_contribution * pmax(excess_events, 0) * endpoint_weight
@@ -698,12 +822,9 @@ if (have_driver_temp) {
     ) %>%
     group_by(temperature) %>%
     mutate(
-      driver_importance_0_100 = rescale_0_100(abs_driver_importance),
-      variable_label = pretty_endpoint_label(variable)
+      driver_importance_0_100 = rescale_0_100(abs_driver_importance)
     ) %>%
-    ungroup()
-  
-  city_driver_by_temp <- city_driver_by_temp %>%
+    ungroup() %>%
     mutate(
       variable_label = case_when(
         str_detect(variable, "^z_") ~ str_remove(variable, "^z_") %>%
@@ -713,8 +834,15 @@ if (have_driver_temp) {
       )
     )
   
-  safe_write_csv(driver_temp_long, file.path(sup_dir, "supplement_driver_contributions_by_temperature_long.csv"))
-  safe_write_csv(city_driver_by_temp, file.path(tab_dir, "table_city_driver_importance_by_temperature.csv"))
+  safe_write_csv(
+    driver_temp_long,
+    file.path(sup_dir, "supplement_driver_contributions_by_temperature_long.csv")
+  )
+  
+  safe_write_csv(
+    city_driver_by_temp,
+    file.path(tab_dir, "table_city_driver_importance_by_temperature.csv")
+  )
 }
 
 # ------------------------------------------------------------------------------------------------
@@ -744,9 +872,19 @@ if (have_structural_ov) {
 
 # ------------------------------------------------------------------------------------------------
 # FIGURE 2: Overall dynamic risk maps at multiple temperatures
+# Uses focal-temperature raw burden, rescaled within each temperature slice to 0-100
 # ------------------------------------------------------------------------------------------------
 if (have_temp_overall) {
-  overall_risk_col <- get_overall_risk_col(temp_overall)
+  dynamic_source_col <- case_when(
+    "overall_weighted_excess" %in% names(temp_overall) ~ "overall_weighted_excess",
+    "total_excess_events" %in% names(temp_overall) ~ "total_excess_events",
+    "overall_risk_0_100" %in% names(temp_overall) ~ "overall_risk_0_100",
+    TRUE ~ NA_character_
+  )
+  
+  if (is.na(dynamic_source_col)) {
+    stop("No usable dynamic source column found in temp_overall.")
+  }
   
   map_list <- purrr::map(seq_len(nrow(target_temp_lookup)), function(i) {
     t_match <- target_temp_lookup$matched_native[i]
@@ -754,46 +892,71 @@ if (have_temp_overall) {
     
     dat_i <- temp_overall %>%
       filter(abs(temperature - t_match) < 1e-8) %>%
-      select(community, all_of(overall_risk_col))
+      group_by(community) %>%
+      summarise(
+        dynamic_raw = mean(.data[[dynamic_source_col]], na.rm = TRUE),
+        .groups = "drop"
+      ) %>%
+      mutate(
+        dynamic_plot_0_100 = rescale_0_100(dynamic_raw)
+      )
     
-    map_i <- chi_sf %>%
+    map_i <- tibble(community = unique(chi_sf$community)) %>%
       left_join(dat_i, by = "community") %>%
+      mutate(dynamic_plot_0_100 = replace_na(dynamic_plot_0_100, 0)) %>%
+      left_join(
+        chi_sf %>% select(community, geometry),
+        by = "community"
+      ) %>%
       st_as_sf() %>%
       st_make_valid()
     
-    make_choropleth(
-      map_i,
-      value_col = overall_risk_col,
-      title = glue("{t_f}°F"),
-      subtitle = NULL,
-      fill_label = "Overall risk\n(0-100)"
-    ) +
-      theme(plot.title = element_text(hjust = 0.5))
+    ggplot(map_i) +
+      geom_sf(aes(fill = dynamic_plot_0_100), color = "white", linewidth = 0.15) +
+      coord_sf(expand = FALSE) +
+      scale_fill_hvi_0_100("Overall risk\n(0-100)") +
+      wide_colorbar +
+      labs(
+        title = glue("{t_f}°F"),
+        subtitle = NULL,
+      ) +
+      theme_pub_map_shared_legend(base_size = base_size) +
+      theme(
+        plot.title = element_text(hjust = 0.5),
+        legend.position = "bottom"
+      )
   })
   
-  fig2 <- wrap_plots(map_list, ncol = length(map_list)) +
+  fig2 <- wrap_plots(map_list, ncol = length(map_list), guides = "collect") &
+    theme(legend.position = "bottom")
+  
+  fig2 <- fig2 +
     plot_annotation(
       title = "Dynamic heat-health risk across multiple temperatures",
-      subtitle = "Overall community-level risk surfaces",
       theme = theme(
         plot.title = element_text(face = "bold", size = 14),
         plot.subtitle = element_text(size = 11)
       )
     )
   
-  save_pub_plot(fig2, "fig2_overall_dynamic_risk_multi_temp.png", width = 15, height = 6.2)
+  save_pub_plot(fig2, "fig2_overall_dynamic_risk_multi_temp.png", width = 15, height = 6.5)
 }
 
 # ------------------------------------------------------------------------------------------------
 # FIGURE 3: Endpoint composition by temperature
 # ------------------------------------------------------------------------------------------------
 if (have_temp_endpoint) {
+  exclude_endpoints <- c("deaths", "ed_visits", "ems_calls")
+  
   endpoint_comp <- purrr::map_dfr(seq_len(nrow(target_temp_lookup)), function(i) {
     t_match <- target_temp_lookup$matched_native[i]
     t_f <- target_temp_lookup$target_f[i]
     
     temp_ep %>%
-      filter(abs(temperature - t_match) < 1e-8) %>%
+      filter(
+        abs(temperature - t_match) < 1e-8,
+        !endpoint_key %in% exclude_endpoints
+      ) %>%
       group_by(endpoint_key, outcome_label, source, domain) %>%
       summarise(
         total_excess = sum(pmax(excess_events, 0), na.rm = TRUE),
@@ -803,68 +966,115 @@ if (have_temp_endpoint) {
         target_temp_f = t_f,
         endpoint_label = if_else(!is.na(outcome_label), outcome_label, pretty_endpoint_label(endpoint_key))
       )
-  }) %>%
-    group_by(target_temp_f) %>%
-    mutate(
-      share = total_excess / sum(total_excess, na.rm = TRUE)
-    ) %>%
-    ungroup()
+  })
   
-  p_endpoint_comp <- endpoint_comp %>%
-    mutate(
-      endpoint_label = fct_reorder(endpoint_label, share, .fun = max, .desc = TRUE),
-      target_temp_f = factor(target_temp_f, levels = target_temps_f)
-    ) %>%
-    ggplot(aes(x = target_temp_f, y = share, fill = endpoint_label)) +
-    geom_col(position = "fill", width = 0.75) +
-    scale_y_continuous(labels = percent_format()) +
-    labs(
-      title = "Cause-specific endpoint composition changes with temperature",
-      subtitle = "Stacked proportions of total modeled excess events across endpoints",
-      x = "Temperature (°F)",
-      y = "Share of modeled excess events",
-      fill = "Endpoint"
-    ) +
-    theme_pub(base_size = base_size) +
-    theme(legend.position = "right")
-  
-  save_pub_plot(p_endpoint_comp, "fig3_endpoint_composition_by_temperature.png", width = 12, height = 8.5)
-  
-  safe_write_csv(endpoint_comp, file.path(tab_dir, "table_endpoint_composition_by_temperature.csv"))
+  if (nrow(endpoint_comp) > 0) {
+    all_endpoint_labels <- endpoint_comp %>%
+      distinct(endpoint_label) %>%
+      arrange(endpoint_label) %>%
+      pull(endpoint_label)
+    
+    endpoint_comp <- endpoint_comp %>%
+      select(target_temp_f, endpoint_label, total_excess) %>%
+      tidyr::complete(
+        target_temp_f = target_temps_f,
+        endpoint_label = all_endpoint_labels,
+        fill = list(total_excess = 0)
+      ) %>%
+      group_by(target_temp_f) %>%
+      mutate(
+        total_temp_excess = sum(total_excess, na.rm = TRUE),
+        share = if_else(total_temp_excess > 0, total_excess / total_temp_excess, 0)
+      ) %>%
+      ungroup()
+    
+    p_endpoint_comp <- endpoint_comp %>%
+      mutate(
+        endpoint_label = fct_reorder(endpoint_label, share, .fun = max, .desc = TRUE),
+        target_temp_f = factor(target_temp_f, levels = target_temps_f)
+      ) %>%
+      ggplot(aes(x = target_temp_f, y = share, fill = endpoint_label)) +
+      geom_col(position = "fill", width = 0.75) +
+      scale_y_continuous(labels = percent_format()) +
+      labs(
+        title = "Cause-specific endpoint composition changes with temperature",
+        subtitle = "Stacked proportions of total modeled excess events across endpoints",
+        x = "Temperature (°F)",
+        y = "Share of modeled excess events",
+        fill = "Endpoint"
+      ) +
+      theme_pub(base_size = base_size) +
+      theme(legend.position = "right")
+    
+    save_pub_plot(p_endpoint_comp, "fig3_endpoint_composition_by_temperature.png", width = 14, height = 9)
+    
+    safe_write_csv(endpoint_comp, file.path(tab_dir, "table_endpoint_composition_by_temperature.csv"))
+  }
 }
 
 # ------------------------------------------------------------------------------------------------
 # FIGURE 4: Outcome entropy maps at multiple temperatures
 # ------------------------------------------------------------------------------------------------
 if (have_temp_endpoint) {
-  entropy_maps <- purrr::map(seq_len(nrow(target_temp_lookup)), function(i) {
+  entropy_all <- purrr::map_dfr(seq_len(nrow(target_temp_lookup)), function(i) {
     t_match <- target_temp_lookup$matched_native[i]
     t_f <- target_temp_lookup$target_f[i]
     
-    entropy_dat <- temp_ep %>%
+    temp_ep %>%
       filter(abs(temperature - t_match) < 1e-8) %>%
       group_by(community, year) %>%
       summarise(
-        endpoint_entropy = safe_entropy(pmax(excess_events, 0)),
+        endpoint_entropy_raw = safe_entropy(pmax(excess_events, 0)),
+        .groups = "drop"
+      ) %>%
+      mutate(target_temp_f = t_f)
+  }) %>%
+    group_by(target_temp_f) %>%
+    mutate(endpoint_entropy_0_100 = rescale_0_100(endpoint_entropy_raw)) %>%
+    ungroup()
+  
+  entropy_maps <- purrr::map(seq_len(nrow(target_temp_lookup)), function(i) {
+    t_f <- target_temp_lookup$target_f[i]
+    
+    entropy_dat <- entropy_all %>%
+      filter(target_temp_f == t_f) %>%
+      group_by(community) %>%
+      summarise(
+        endpoint_entropy_plot = mean(endpoint_entropy_0_100, na.rm = TRUE),
         .groups = "drop"
       )
     
-    entropy_sf <- chi_sf %>%
+    entropy_sf <- tibble(community = unique(chi_sf$community)) %>%
       left_join(entropy_dat, by = "community") %>%
+      mutate(endpoint_entropy_plot = replace_na(endpoint_entropy_plot, 0)) %>%
+      left_join(
+        chi_sf %>% select(community, geometry),
+        by = "community"
+      ) %>%
       st_as_sf() %>%
       st_make_valid()
     
-    make_choropleth(
-      entropy_sf,
-      value_col = "endpoint_entropy",
-      title = glue("{t_f}°F"),
-      subtitle = NULL,
-      fill_label = "Endpoint\nentropy"
-    ) +
-      theme(plot.title = element_text(hjust = 0.5))
+    ggplot(entropy_sf) +
+      geom_sf(aes(fill = endpoint_entropy_plot), color = "white", linewidth = 0.15) +
+      coord_sf(expand = FALSE) +
+      scale_fill_hvi_0_100("Endpoint\nentropy\n(0-100)") +
+      wide_colorbar +
+      labs(
+        title = glue("{t_f}°F"),
+        subtitle = NULL,
+        caption = "Chicago community areas"
+      ) +
+      theme_pub_map_shared_legend(base_size = base_size) +
+      theme(
+        plot.title = element_text(hjust = 0.5),
+        legend.position = "bottom"
+      )
   })
   
-  fig4 <- wrap_plots(entropy_maps, ncol = length(entropy_maps)) +
+  fig4 <- wrap_plots(entropy_maps, ncol = length(entropy_maps), guides = "collect") &
+    theme(legend.position = "bottom")
+  
+  fig4 <- fig4 +
     plot_annotation(
       title = "Outcome entropy across Chicago community areas",
       subtitle = "Higher entropy indicates a more diffuse endpoint burden profile; lower entropy indicates domination by fewer endpoints",
@@ -874,7 +1084,7 @@ if (have_temp_endpoint) {
       )
     )
   
-  save_pub_plot(fig4, "fig4_entropy_maps_multi_temp.png", width = 15, height = 6.2)
+  save_pub_plot(fig4, "fig4_entropy_maps_multi_temp.png", width = 15, height = 6.5)
 }
 
 # ------------------------------------------------------------------------------------------------
@@ -910,10 +1120,10 @@ if (have_driver_temp) {
 }
 
 # ------------------------------------------------------------------------------------------------
-# FIGURE 6: All-community endpoint heatmap at focal temperature
+# FIGURE 6: All-community endpoint heatmap at focal temperature (cause-specific only)
 # ------------------------------------------------------------------------------------------------
 if (have_temp_endpoint && have_temp_overall) {
-  focal_f <- 92
+  focal_f <- 91
   focal_match <- target_temp_lookup %>%
     filter(target_f == focal_f) %>%
     pull(matched_native)
@@ -921,51 +1131,95 @@ if (have_temp_endpoint && have_temp_overall) {
   endpoint_risk_col <- get_endpoint_risk_col(temp_ep)
   overall_risk_col  <- get_overall_risk_col(temp_overall)
   
+  exclude_endpoints <- c("deaths", "ed_visits", "ems_calls")
+  
   comm_order <- temp_overall %>%
     filter(abs(temperature - focal_match) < 1e-8) %>%
-    select(community, overall_risk = all_of(overall_risk_col)) %>%
+    group_by(community) %>%
+    summarise(
+      overall_risk = mean(.data[[overall_risk_col]], na.rm = TRUE),
+      .groups = "drop"
+    ) %>%
+    right_join(
+      tibble(community = unique(chi_sf$community)),
+      by = "community"
+    ) %>%
+    mutate(overall_risk = replace_na(overall_risk, 0)) %>%
     arrange(desc(overall_risk)) %>%
-    pull(community)
+    pull(community) %>%
+    unique()
+  
+  endpoint_levels <- temp_ep %>%
+    filter(
+      abs(temperature - focal_match) < 1e-8,
+      !endpoint_key %in% exclude_endpoints
+    ) %>%
+    group_by(endpoint_key) %>%
+    summarise(
+      mean_risk = mean(.data[[endpoint_risk_col]], na.rm = TRUE),
+      outcome_label = dplyr::first(outcome_label),
+      .groups = "drop"
+    ) %>%
+    mutate(
+      endpoint_label = if_else(!is.na(outcome_label), outcome_label, pretty_endpoint_label(endpoint_key))
+    ) %>%
+    arrange(desc(mean_risk)) %>%
+    pull(endpoint_label)
   
   heatmap_full <- temp_ep %>%
-    filter(abs(temperature - focal_match) < 1e-8) %>%
+    filter(
+      abs(temperature - focal_match) < 1e-8,
+      !endpoint_key %in% exclude_endpoints
+    ) %>%
+    group_by(community, endpoint_key) %>%
+    summarise(
+      endpoint_risk_plot = mean(.data[[endpoint_risk_col]], na.rm = TRUE),
+      outcome_label = dplyr::first(outcome_label),
+      .groups = "drop"
+    ) %>%
     mutate(
-      endpoint_label = if_else(!is.na(outcome_label), outcome_label, pretty_endpoint_label(endpoint_key)),
+      endpoint_label = if_else(!is.na(outcome_label), outcome_label, pretty_endpoint_label(endpoint_key))
+    ) %>%
+    select(community, endpoint_label, endpoint_risk_plot) %>%
+    tidyr::complete(
+      community = unique(chi_sf$community),
+      endpoint_label = endpoint_levels,
+      fill = list(endpoint_risk_plot = 0)
+    ) %>%
+    mutate(
       community = factor(community, levels = comm_order),
-      endpoint_label = fct_reorder(endpoint_label, .data[[endpoint_risk_col]], .fun = mean, .desc = TRUE)
+      endpoint_label = factor(endpoint_label, levels = endpoint_levels)
     )
-  
-  heat_lim <- quantile(abs(heatmap_full[[endpoint_risk_col]]), probs = 0.95, na.rm = TRUE)
-  if (!is.finite(heat_lim) || heat_lim <= 0) {
-    heat_lim <- max(abs(heatmap_full[[endpoint_risk_col]]), na.rm = TRUE)
-  }
   
   p_heatmap_full <- ggplot(
     heatmap_full,
-    aes(x = endpoint_label, y = community, fill = .data[[endpoint_risk_col]])
+    aes(x = endpoint_label, y = community, fill = endpoint_risk_plot)
   ) +
     geom_tile(color = "white", linewidth = 0.12) +
-    scale_fill_viridis_c(
-      option = "C",
-      limits = c(0, heat_lim),
-      oob = scales::squish,
-      name = "Endpoint risk\n(0-100)"
-    ) +
+    scale_fill_hvi_0_100("Endpoint risk\n(0-100)") +
+    wide_colorbar +
     labs(
-      title = "Endpoint risk architecture across all Chicago community areas",
-      subtitle = glue("All 77 community areas at ~{focal_f}°F"),
+      title = "Cause-specific endpoint risk architecture across all Chicago community areas",
+      subtitle = glue("All mapped community areas at ~{focal_f}°F; all-cause endpoints excluded"),
       x = NULL,
       y = NULL
     ) +
-    theme_pub(base_size = 10) +
+    theme_pub(base_size = 13) +
     theme(
-      axis.text.x = element_text(angle = 45, hjust = 1, size = 8),
-      axis.text.y = element_text(size = 7),
+      axis.text.x = element_text(angle = 45, hjust = 1, size = 10),
+      axis.text.y = element_text(size = 10),
       panel.grid = element_blank(),
-      legend.position = "bottom"
+      legend.position = "bottom",
+      legend.title = element_text(size = 12, face = "bold"),
+      legend.text = element_text(size = 11)
     )
   
-  save_pub_plot(p_heatmap_full, "fig6_all_community_endpoint_heatmap_92f.png", width = 13, height = 12)
+  save_pub_plot(
+    p_heatmap_full,
+    "fig6_all_community_endpoint_heatmap_92f.png",
+    width = 13,
+    height = 18
+  )
 }
 
 # ------------------------------------------------------------------------------------------------
@@ -973,23 +1227,42 @@ if (have_temp_endpoint && have_temp_overall) {
 # ------------------------------------------------------------------------------------------------
 if (have_structural_ov && have_temp_overall) {
   structural_col <- get_structural_col(structural_overall)
-  overall_risk_col <- get_overall_risk_col(temp_overall)
   
-  focal_f <- 92
+  focal_f <- 91
   focal_match <- target_temp_lookup %>%
     filter(target_f == focal_f) %>%
     pull(matched_native)
   
+  # use raw focal-temperature burden, then rescale within the focal slice
+  dynamic_source_col <- if ("overall_weighted_excess" %in% names(temp_overall)) {
+    "overall_weighted_excess"
+  } else if ("total_excess_events" %in% names(temp_overall)) {
+    "total_excess_events"
+  } else if ("overall_risk_0_100" %in% names(temp_overall)) {
+    "overall_risk_0_100"
+  } else {
+    stop("No usable dynamic-risk column found in temp_overall.")
+  }
+  
   dynamic_dat <- temp_overall %>%
     filter(abs(temperature - focal_match) < 1e-8) %>%
-    select(community, dynamic_score = all_of(overall_risk_col))
+    group_by(community) %>%
+    summarise(
+      dynamic_raw = mean(.data[[dynamic_source_col]], na.rm = TRUE),
+      .groups = "drop"
+    ) %>%
+    mutate(
+      dynamic_score = rescale_0_100(dynamic_raw)
+    )
   
   scatter_dat <- structural_overall %>%
     filter(year == as.character(target_year)) %>%
     select(community, structural_score = all_of(structural_col)) %>%
     left_join(dynamic_dat, by = "community") %>%
     drop_na() %>%
-    mutate(community_label = label_community_pretty(community))
+    mutate(
+      community_label = label_community_pretty(community)
+    )
   
   top_labs <- scatter_dat %>%
     mutate(label_score = structural_score + dynamic_score) %>%
@@ -998,7 +1271,7 @@ if (have_structural_ov && have_temp_overall) {
   p_scatter <- ggplot(scatter_dat, aes(x = structural_score, y = dynamic_score)) +
     geom_point(size = 2.7, alpha = 0.85) +
     geom_smooth(method = "lm", se = FALSE, linewidth = 0.8, linetype = 2, color = "#3B6CF6") +
-    geom_text_repel(
+    ggrepel::geom_text_repel(
       data = top_labs,
       aes(label = community_label),
       size = 3.2,
@@ -1006,9 +1279,11 @@ if (have_structural_ov && have_temp_overall) {
       box.padding = 0.2,
       point.padding = 0.2
     ) +
+    scale_x_continuous(limits = c(0, 100), breaks = c(0, 25, 50, 75, 100)) +
+    scale_y_continuous(limits = c(0, 100), breaks = c(0, 25, 50, 75, 100)) +
     labs(
       title = "Structural vulnerability versus dynamic risk",
-      subtitle = glue("{target_year} structural HVI versus overall risk at ~{focal_f}°F"),
+      subtitle = glue("{target_year} structural HVI versus focal-temperature dynamic risk at ~{focal_f}°F"),
       x = "Structural HVI (0-100)",
       y = "Dynamic heat-health risk (0-100)"
     ) +
@@ -1106,3 +1381,316 @@ message("O'Hare present in map sf: ", "OHARE" %in% chi_sf$community)
 if (have_structural_ov) message("O'Hare present in structural overall: ", "OHARE" %in% structural_overall$community)
 if (have_temp_overall) message("O'Hare present in temp overall: ", "OHARE" %in% temp_overall$community)
 if (have_temp_endpoint) message("O'Hare present in temp endpoint: ", "OHARE" %in% temp_ep$community)
+
+heatmap_ohare_check <- if (exists("heatmap_full")) {
+  tibble(
+    figure = "fig6_heatmap",
+    has_ohare = "OHARE" %in% unique(as.character(heatmap_full$community))
+  )
+} else {
+  tibble(figure = "fig6_heatmap", has_ohare = NA)
+}
+
+map_ohare_check <- tibble(
+  figure = c("fig2_dynamic_maps", "fig4_entropy_maps"),
+  has_ohare = c(
+    "OHARE" %in% chi_sf$community,
+    "OHARE" %in% chi_sf$community
+  )
+)
+
+safe_write_csv(
+  bind_rows(heatmap_ohare_check, map_ohare_check),
+  file.path(tab_dir, "publication_ohare_check.csv")
+)
+
+
+# ------------------------------------------------------------------------------------------------
+# FIGURE 9: Community-specific temperature response curves
+# ------------------------------------------------------------------------------------------------
+if (have_temp_endpoint) {
+  selected_communities_for_curves <- c(
+    "AUSTIN",
+    "NEAR NORTH SIDE",
+    "ENGLEWOOD",
+    "SOUTH SHORE",
+    "NEAR WEST SIDE",
+    "HYDE PARK",
+    "AVONDALE",
+    "GARFIELD RIDGE"
+    
+  )
+  
+  selected_endpoints_for_curves <- c(
+    "deaths",
+    "death_cvd",
+    "ed_visits",
+    "ed_cvd",
+    "ems_calls",
+    "ems_cvd"
+  )
+  
+  endpoint_risk_col <- get_endpoint_risk_col(temp_ep)
+  
+  curve_dat <- temp_ep %>%
+    filter(
+      community %in% selected_communities_for_curves,
+      endpoint_key %in% selected_endpoints_for_curves
+    ) %>%
+    group_by(community, endpoint_key, temperature) %>%
+    summarise(
+      endpoint_risk_plot = mean(.data[[endpoint_risk_col]], na.rm = TRUE),
+      outcome_label = dplyr::first(outcome_label),
+      .groups = "drop"
+    ) %>%
+    mutate(
+      endpoint_label = if_else(!is.na(outcome_label), outcome_label, pretty_endpoint_label(endpoint_key)),
+      community_label = label_community_pretty(community),
+      temperature_f_plot = if (temp_units == "C") c_to_f(temperature) else temperature
+    )
+  
+  if (nrow(curve_dat) > 0) {
+    p_curves <- ggplot(
+      curve_dat,
+      aes(x = temperature_f_plot, y = endpoint_risk_plot, color = community_label)
+    ) +
+      geom_line(linewidth = 1) +
+      facet_wrap(~ endpoint_label, ncol = 2, scales = "fixed") +
+      scale_y_continuous(limits = c(0, 100), breaks = c(0, 25, 50, 75, 100)) +
+      labs(
+        title = "Community-specific heat-effect modification curves",
+        subtitle = "Selected communities across all-cause and cardiovascular endpoints",
+        x = "Temperature (°F)",
+        y = "Endpoint risk (0-100)",
+        color = "Community"
+      ) +
+      theme_pub(base_size = base_size) +
+      theme(legend.position = "bottom")
+    
+    save_pub_plot(p_curves, "fig9_community_effect_modification_curves.png", width = 12, height = 9)
+  }
+}
+
+
+# ------------------------------------------------------------------------------------------------
+# FIGURE 10: Community-specific curves by source family
+# ------------------------------------------------------------------------------------------------
+if (have_temp_endpoint) {
+  selected_communities_for_curves <- c(
+    "AUSTIN",
+    "NEAR NORTH SIDE",
+    "ENGLEWOOD",
+    "SOUTH SHORE",
+    "NEAR WEST SIDE",
+    "HYDE PARK",
+    "AVONDALE",
+    "GARFIELD RIDGE"
+  )
+  
+  endpoint_risk_col <- get_endpoint_risk_col(temp_ep)
+  
+  curve_dat_all <- temp_ep %>%
+    filter(
+      community %in% selected_communities_for_curves
+    ) %>%
+    group_by(community, endpoint_key, temperature, source) %>%
+    summarise(
+      endpoint_risk_plot = mean(.data[[endpoint_risk_col]], na.rm = TRUE),
+      outcome_label = dplyr::first(outcome_label),
+      .groups = "drop"
+    ) %>%
+    mutate(
+      endpoint_label = if_else(!is.na(outcome_label), outcome_label, pretty_endpoint_label(endpoint_key)),
+      community_label = label_community_pretty(community),
+      temperature_f_plot = if (temp_units == "C") c_to_f(temperature) else temperature
+    )
+  
+  for (src in c("Mortality", "ED", "EMS")) {
+    curve_dat_src <- curve_dat_all %>%
+      filter(source == src)
+    
+    if (nrow(curve_dat_src) == 0) next
+    
+    top_endpoints_src <- curve_dat_src %>%
+      group_by(endpoint_key, endpoint_label) %>%
+      summarise(mean_risk = mean(endpoint_risk_plot, na.rm = TRUE), .groups = "drop") %>%
+      slice_max(mean_risk, n = 6, with_ties = FALSE) %>%
+      pull(endpoint_key)
+    
+    curve_dat_src <- curve_dat_src %>%
+      filter(endpoint_key %in% top_endpoints_src)
+    
+    p_src <- ggplot(
+      curve_dat_src,
+      aes(x = temperature_f_plot, y = endpoint_risk_plot, color = community_label)
+    ) +
+      geom_line(linewidth = 1) +
+      facet_wrap(~ endpoint_label, ncol = 2, scales = "fixed") +
+      scale_y_continuous(limits = c(0, 100), breaks = c(0, 25, 50, 75, 100)) +
+      labs(
+        title = glue("{src} community-specific temperature response curves"),
+        subtitle = "Selected communities and top-risk endpoints",
+        x = "Temperature (°F)",
+        y = "Endpoint risk (0-100)",
+        color = "Community"
+      ) +
+      theme_pub(base_size = base_size) +
+      theme(legend.position = "bottom")
+    
+    save_pub_plot(
+      p_src,
+      glue("fig10_{tolower(src)}_community_curves.png"),
+      width = 12,
+      height = 9
+    )
+  }
+}
+
+# ------------------------------------------------------------------------------------------------
+# FIGURE X: Faceted endpoint maps at ~91°F
+# Cause-specific endpoints only; all mapped communities retained
+# ------------------------------------------------------------------------------------------------
+
+# --- Build endpoint label lookup FIRST ---
+endpoint_label_lookup <- temp_ep %>%
+  filter(endpoint_key %in% endpoint_panel_keys) %>%
+  group_by(endpoint_key) %>%
+  summarise(
+    outcome_label = dplyr::first(outcome_label),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    endpoint_label = if_else(!is.na(outcome_label),
+                             outcome_label,
+                             pretty_endpoint_label(endpoint_key))
+  ) %>%
+  select(endpoint_key, endpoint_label)
+
+# --- Build main dataset ---
+endpoint_panel_dat <- temp_ep %>%
+  filter(
+    abs(temperature - focal_match_map) < 1e-8,
+    endpoint_key %in% endpoint_panel_keys
+  ) %>%
+  group_by(community, endpoint_key) %>%
+  summarise(
+    endpoint_risk_plot = mean(.data[[endpoint_risk_col]], na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  tidyr::complete(
+    community = unique(chi_sf$community),
+    endpoint_key = endpoint_panel_keys,
+    fill = list(endpoint_risk_plot = 0)
+  ) %>%
+  left_join(endpoint_label_lookup, by = "endpoint_key") %>%  # <-- critical fix
+  mutate(
+    endpoint_label = factor(endpoint_label, levels = endpoint_panel_levels)
+  ) %>%
+  left_join(
+    chi_sf %>% select(community, geometry),
+    by = "community"
+  ) %>%
+  st_as_sf() %>%
+  st_make_valid()
+
+# ------------------------------------------------------------------------------------------------
+# FIGURE X: Faceted endpoint maps at ~91°F
+# Cause-specific endpoints only; all mapped communities retained
+# ------------------------------------------------------------------------------------------------
+if (have_temp_endpoint) {
+  focal_f_map <- 91
+  
+  focal_match_map <- target_temp_lookup %>%
+    mutate(abs_diff = abs(target_f - focal_f_map)) %>%
+    arrange(abs_diff) %>%
+    slice(1) %>%
+    pull(matched_native)
+  
+  endpoint_risk_col <- get_endpoint_risk_col(temp_ep)
+  
+  exclude_endpoints <- c("deaths", "ed_visits", "ems_calls")
+  
+  manual_endpoint_panel <- c(
+    "death_gi", "death_renal", "death_injury",
+    "ed_cvd", "ed_respiratory", "ed_renal",
+    "ems_cvd", "ems_respiratory", "ems_injury"
+  )
+  
+  endpoint_panel_keys <- manual_endpoint_panel[manual_endpoint_panel %in% unique(temp_ep$endpoint_key)]
+  
+  # build a named lookup vector instead of relying on join-created columns
+  endpoint_label_lookup <- temp_ep %>%
+    filter(endpoint_key %in% endpoint_panel_keys) %>%
+    group_by(endpoint_key) %>%
+    summarise(
+      outcome_label = dplyr::first(outcome_label),
+      .groups = "drop"
+    ) %>%
+    mutate(
+      endpoint_label_clean = dplyr::if_else(
+        !is.na(outcome_label),
+        outcome_label,
+        pretty_endpoint_label(endpoint_key)
+      )
+    )
+  
+  endpoint_label_vec <- endpoint_label_lookup$endpoint_label_clean
+  names(endpoint_label_vec) <- endpoint_label_lookup$endpoint_key
+  
+  endpoint_panel_levels <- endpoint_label_lookup %>%
+    filter(endpoint_key %in% endpoint_panel_keys) %>%
+    pull(endpoint_label_clean) %>%
+    unique()
+  
+  endpoint_panel_dat <- temp_ep %>%
+    filter(
+      abs(temperature - focal_match_map) < 1e-8,
+      endpoint_key %in% endpoint_panel_keys
+    ) %>%
+    group_by(community, endpoint_key) %>%
+    summarise(
+      endpoint_risk_plot = mean(.data[[endpoint_risk_col]], na.rm = TRUE),
+      .groups = "drop"
+    ) %>%
+    tidyr::complete(
+      community = unique(chi_sf$community),
+      endpoint_key = endpoint_panel_keys,
+      fill = list(endpoint_risk_plot = 0)
+    ) %>%
+    mutate(
+      endpoint_label = unname(endpoint_label_vec[endpoint_key]),
+      endpoint_label = factor(endpoint_label, levels = endpoint_panel_levels)
+    ) %>%
+    left_join(
+      chi_sf %>% st_drop_geometry() %>% select(community),
+      by = "community"
+    ) %>%
+    left_join(
+      chi_sf %>% select(community, geometry),
+      by = "community"
+    ) %>%
+    st_as_sf() %>%
+    st_make_valid()
+  
+  p_endpoint_map_panel <- ggplot(endpoint_panel_dat) +
+    geom_sf(aes(fill = endpoint_risk_plot), color = "white", linewidth = 0.12) +
+    coord_sf(expand = FALSE) +
+    facet_wrap(~ endpoint_label, ncol = 3) +
+    scale_fill_hvi_0_100("Endpoint risk\n(0-100)") +
+    wide_colorbar +
+    labs(
+      title = "Cause-specific endpoint risk surfaces at ~91°F"
+    ) +
+    theme_pub_map_shared_legend(base_size = 10) +
+    theme(
+      strip.text = element_text(face = "bold", size = 10),
+      legend.position = "bottom"
+    )
+  
+  save_pub_plot(
+    p_endpoint_map_panel,
+    "fig_endpoint_map_panel_91f.png",
+    width = 12.5,
+    height = 10
+  )
+}

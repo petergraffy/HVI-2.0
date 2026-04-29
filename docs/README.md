@@ -8,6 +8,7 @@ This directory contains the operational documentation that supports the scientif
 - `PIPELINE.md`: current reproducible workflow scaffold and the staged migration toward `targets`.
 - `ENDPOINT_DICTIONARY.md`: mortality, emergency department, and EMS endpoint names used across the analysis.
 - `PUBLIC_EXPORT_CONTRACT.md`: dashboard-safe export layout, small-cell suppression rules, and scenario slider files.
+- `../code/archive/README.md`: notes on prototype or superseded scripts preserved outside the production pipeline.
 
 ## Scientific Workflow
 

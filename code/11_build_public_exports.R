@@ -16,7 +16,7 @@ dashboard_private_dirs <- c(
 dashboard_private_dirs <- dashboard_private_dirs[dir.exists(dashboard_private_dirs)]
 
 if (length(dashboard_private_dirs) == 0) {
-  stop("No private frontend export directory found. Run 09e_build_frontend_exports.R or 00_hvi_prototype_output.R first.")
+  stop("No private frontend export directory found. Run 09e_build_frontend_exports.R first.")
 }
 
 dashboard_src <- dashboard_private_dirs[1]

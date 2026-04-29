@@ -10,6 +10,8 @@ The repository now has a first `targets` scaffold in `_targets.R`. It is intenti
 4. `public_exports`: creates public dashboard/manuscript-safe outputs.
 5. `scenario_exports`: creates precomputed dashboard slider outputs for temperature and NDVI scenarios.
 
+Canonical production scripts live directly under `code/`. Prototype, exploratory, or superseded scripts are kept in `code/archive/` and should not be called by `_targets.R` or dashboard export automation.
+
 ## Run
 
 ```r

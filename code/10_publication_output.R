@@ -55,7 +55,7 @@ dir.create(sup_dir, recursive = TRUE, showWarnings = FALSE)
 # ------------------------------------------------------------------------------------------------
 # User-settable options
 # ------------------------------------------------------------------------------------------------
-target_temp_f <- 92
+target_temp_f <- 75
 target_year   <- 2022
 top_n_labels  <- 8
 
@@ -819,7 +819,7 @@ if (have_temp_endpoint) {
       group_by(community) %>%
       summarise(total_risk = sum(.data[[risk_col]], na.rm = TRUE), .groups = "drop") %>%
       arrange(desc(total_risk)) %>%
-      slice_head(n = 77) %>%
+      slice_head(n = 30) %>%
       select(community)
     
     heatmap_plot_dat <- temp_ep %>%

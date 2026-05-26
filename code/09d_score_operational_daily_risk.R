@@ -40,6 +40,16 @@ hvi_model_matrix <- get(model_matrix_obj, envir = .GlobalEnv) %>%
     dow = factor(as.character(dow), levels = c("Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"))
   )
 
+if (all(is.na(hvi_model_matrix$dow)) && "date" %in% names(hvi_model_matrix)) {
+  hvi_model_matrix <- hvi_model_matrix %>%
+    mutate(
+      dow = factor(
+        c("Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat")[lubridate::wday(date)],
+        levels = c("Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat")
+      )
+    )
+}
+
 hvi_endpoint_metadata <- get(endpoint_meta_obj, envir = .GlobalEnv) %>% clean_names()
 endpoint_models <- get(models_obj, envir = .GlobalEnv)
 endpoint_weights <- get(weights_obj, envir = .GlobalEnv)
@@ -55,7 +65,8 @@ hvi_model_matrix <- hvi_model_matrix %>%
                   "1" = "2019",
                   "2" = "2020",
                   "3" = "2021",
-                  "4" = "2022")
+                  "4" = "2022",
+                  .default = as.character(year))
   )
 
 # score_df <- score_df %>%
@@ -88,11 +99,15 @@ for (ep_key in names(endpoint_models)) {
   
   all_model_vars <- all.vars(formula(fit))
   z_vars_use <- all_model_vars[stringr::str_detect(all_model_vars, "^z_")]
+  model_adjustment_vars <- intersect(
+    setdiff(all_model_vars, c("outcome", "heat_dose", "pop_offset", "doy", "dow", "year", z_vars_use)),
+    names(hvi_model_matrix)
+  )
   
   score_df <- hvi_model_matrix %>%
     select(
       community, date, year, doy, dow, pop_offset,
-      any_of(outcome_var), all_of(heat_var), any_of(z_vars_use)
+      any_of(outcome_var), all_of(heat_var), any_of(z_vars_use), any_of(model_adjustment_vars)
     ) %>%
     rename(
       outcome = any_of(outcome_var),
@@ -171,7 +186,12 @@ for (ep_key in names(endpoint_models)) {
 }
 
 
-ca_day_endpoint_risk <- bind_rows(endpoint_daily_list) %>%
+ca_day_endpoint_risk <- bind_rows(endpoint_daily_list)
+if (nrow(ca_day_endpoint_risk) == 0) {
+  stop("No daily endpoint risk rows were produced. Check heat-dose, year, and model covariate harmonization.")
+}
+
+ca_day_endpoint_risk <- ca_day_endpoint_risk %>%
   group_by(endpoint_key) %>%
   mutate(endpoint_risk_0_100 = rescale_0_100(excess_events)) %>%
   ungroup() %>%

@@ -69,6 +69,7 @@ rf_seed      <- 20260401
 gam_k_doy <- 10
 gam_family <- quasipoisson(link = "log")
 min_total_events <- 50
+include_humidity_adjustment <- tolower(Sys.getenv("HVI_INCLUDE_HUMIDITY_ADJUSTMENT", unset = "false")) %in% c("true", "1", "yes")
 
 # variable screening thresholds
 max_missing_prop <- 0.20
@@ -128,14 +129,15 @@ source_from_endpoint <- function(x) {
   )
 }
 
-build_rf_formula <- function(outcome_var, heat_var, vuln_vars) {
+build_rf_formula <- function(outcome_var, heat_var, vuln_vars, adjustment_vars = NULL) {
   as.formula(
-    paste0(outcome_var, " ~ ", paste(c(heat_var, vuln_vars), collapse = " + "))
+    paste0(outcome_var, " ~ ", paste(c(heat_var, adjustment_vars, vuln_vars), collapse = " + "))
   )
 }
 
-clean_analysis_df <- function(dat, outcome_var, heat_var, vuln_vars, use_offset = TRUE) {
-  keep <- c("community", "date", "year", "doy", "dow", "pop_offset", outcome_var, heat_var, vuln_vars)
+clean_analysis_df <- function(dat, outcome_var, heat_var, vuln_vars, use_offset = TRUE, adjustment_vars = "humidity") {
+  adjustment_vars <- adjustment_vars[adjustment_vars %in% names(dat)]
+  keep <- c("community", "date", "year", "doy", "dow", "pop_offset", outcome_var, heat_var, adjustment_vars, vuln_vars)
   keep <- keep[keep %in% names(dat)]
   
   out <- dat %>%
@@ -153,11 +155,13 @@ clean_analysis_df <- function(dat, outcome_var, heat_var, vuln_vars, use_offset 
   out
 }
 
-build_gam_formula <- function(outcome_var, heat_var, vuln_vars, use_offset = FALSE) {
+build_gam_formula <- function(outcome_var, heat_var, vuln_vars, use_offset = FALSE, humidity_var = NULL) {
+  include_humidity <- !is.null(humidity_var) && nzchar(humidity_var)
   rhs_terms <- c(
     heat_var,
     vuln_vars,
     paste0(heat_var, ":", vuln_vars),
+    if (include_humidity) glue::glue("s({humidity_var}, k = 6)"),
     glue::glue("s(doy, bs = 'cc', k = {gam_k_doy})"),
     "factor(dow)",
     "factor(year)"
@@ -236,11 +240,12 @@ screen_vulnerability_vars <- function(dat, vars, max_missing_prop = 0.20, min_no
 }
 
 run_rf_screen <- function(dat, outcome_var, heat_var, vuln_vars, num_trees = 500, seed = 1) {
-  df <- clean_analysis_df(dat, outcome_var, heat_var, vuln_vars, use_offset = FALSE) %>%
+  adjustment_vars <- if (include_humidity_adjustment) intersect("humidity", names(dat)) else character(0)
+  df <- clean_analysis_df(dat, outcome_var, heat_var, vuln_vars, use_offset = FALSE, adjustment_vars = adjustment_vars) %>%
     drop_na(outcome, heat_dose)
   
-  # median-impute only vulnerability vars for RF convenience
-  for (v in vuln_vars) {
+  # median-impute vulnerability and adjustment vars for RF convenience
+  for (v in unique(c(vuln_vars, adjustment_vars))) {
     if (v %in% names(df)) {
       med <- median(df[[v]], na.rm = TRUE)
       if (!is.finite(med)) med <- 0
@@ -253,7 +258,7 @@ run_rf_screen <- function(dat, outcome_var, heat_var, vuln_vars, num_trees = 500
   set.seed(seed)
   
   fit <- ranger(
-    formula = build_rf_formula("outcome", "heat_dose", vuln_vars),
+    formula = build_rf_formula("outcome", "heat_dose", vuln_vars, adjustment_vars = adjustment_vars),
     data = df,
     num.trees = num_trees,
     importance = "permutation",
@@ -265,6 +270,7 @@ run_rf_screen <- function(dat, outcome_var, heat_var, vuln_vars, num_trees = 500
     variable = names(fit$variable.importance),
     importance = as.numeric(fit$variable.importance)
   ) %>%
+    filter(variable %in% vuln_vars) %>%
     arrange(desc(importance))
 }
 
@@ -280,11 +286,15 @@ median_impute_vars <- function(df, vars) {
 }
 
 fit_interaction_gam <- function(dat, outcome_var, heat_var, vuln_vars) {
-  df <- clean_analysis_df(dat, outcome_var, heat_var, vuln_vars, use_offset = TRUE) %>%
+  adjustment_vars <- if (include_humidity_adjustment) intersect("humidity", names(dat)) else character(0)
+  df <- clean_analysis_df(dat, outcome_var, heat_var, vuln_vars, use_offset = TRUE, adjustment_vars = adjustment_vars) %>%
     drop_na(outcome, heat_dose, doy, dow, year)
   
   # remove rows with missing selected vars
   df <- df %>% drop_na(all_of(vuln_vars))
+  if (length(adjustment_vars) > 0) {
+    df <- df %>% drop_na(all_of(adjustment_vars))
+  }
   
   if (nrow(df) == 0) return(NULL)
   if (sum(df$outcome, na.rm = TRUE) < min_total_events) return(NULL)
@@ -298,7 +308,8 @@ fit_interaction_gam <- function(dat, outcome_var, heat_var, vuln_vars) {
     outcome_var = "outcome",
     heat_var = "heat_dose",
     vuln_vars = vuln_vars,
-    use_offset = use_offset
+    use_offset = use_offset,
+    humidity_var = if ("humidity" %in% adjustment_vars) "humidity" else NULL
   )
   
   fit <- mgcv::bam(
@@ -665,6 +676,15 @@ for (i in seq_len(nrow(hvi_endpoint_metadata))) {
     use_offset = TRUE
   ) %>%
     drop_na(outcome, heat_dose, doy, dow, year)
+
+  humidity_adjustment <- if (include_humidity_adjustment && "humidity" %in% names(df_tmp) && any(is.finite(df_tmp$humidity), na.rm = TRUE)) {
+    "humidity"
+  } else {
+    NULL
+  }
+  if (!is.null(humidity_adjustment)) {
+    df_tmp <- df_tmp %>% drop_na(all_of(humidity_adjustment))
+  }
   
   use_offset_tmp <- "pop_offset" %in% names(df_tmp) &&
     sum(is.finite(df_tmp$pop_offset) & df_tmp$pop_offset > 0, na.rm = TRUE) > 0
@@ -770,7 +790,8 @@ for (i in seq_len(nrow(hvi_endpoint_metadata))) {
     outcome_var = "outcome",
     heat_var = "heat_dose",
     vuln_vars = vars_here,
-    use_offset = use_offset_tmp
+    use_offset = use_offset_tmp,
+    humidity_var = humidity_adjustment
   )
   
   fit <- tryCatch(

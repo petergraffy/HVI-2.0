@@ -19,7 +19,7 @@ The scientific pipeline has four major modeling layers:
 1. Health endpoint harmonization across EMS calls, ED visits, and mortality records.
 2. Environmental heat exposure scoring using endpoint-specific heat dose and MRT-based temperature summaries.
 3. Structural vulnerability modeling using community-level demographic, built-environment, health, and socioeconomic covariates.
-4. Public dashboard export generation, including precomputed temperature and NDVI scenario grids for interactive exploration.
+4. Public dashboard export generation, including precomputed temperature, NDVI, and AC prevalence scenario grids for interactive exploration. Humidity is retained as a model-matrix field for sensitivity analyses but is inactive in the public slider grid by default.
 
 ## Public Tool Boundary
 

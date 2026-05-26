@@ -32,6 +32,8 @@ k_folds_spatial <- 5
 seed <- 20260402
 min_total_events <- 50
 use_offset_if_available <- TRUE
+humidity_var <- "humidity"
+include_humidity_adjustment <- tolower(Sys.getenv("HVI_INCLUDE_HUMIDITY_ADJUSTMENT", unset = "false")) %in% c("true", "1", "yes")
 
 doy_k <- 10
 perform_temporal_cv <- TRUE
@@ -158,11 +160,16 @@ for (i in seq_len(nrow(hvi_endpoint_metadata))) {
     endpoint_key = ep_key,
     variable = z_vars_use
   )
+
+  include_humidity <- include_humidity_adjustment &&
+    humidity_var %in% names(hvi_model_matrix) &&
+    any(is.finite(hvi_model_matrix[[humidity_var]]), na.rm = TRUE)
+  model_covars <- c(z_vars_use, if (include_humidity) humidity_var)
   
   dat_ep <- hvi_model_matrix %>%
     select(
       community, date, year, doy, dow, fold, pop_offset,
-      all_of(outcome_var), all_of(heat_var), all_of(z_vars_use)
+      all_of(outcome_var), all_of(heat_var), all_of(model_covars)
     ) %>%
     rename(
       outcome = all_of(outcome_var),
@@ -199,7 +206,7 @@ for (i in seq_len(nrow(hvi_endpoint_metadata))) {
   }
   
   dat_ep <- dat_ep %>%
-    drop_na(all_of(z_vars_use), doy, dow, year) %>%
+    drop_na(all_of(model_covars), doy, dow, year) %>%
     mutate(
       community = as.character(community),
       date = as.Date(date),
@@ -227,7 +234,9 @@ for (i in seq_len(nrow(hvi_endpoint_metadata))) {
     heat_var     = "heat_dose",
     z_vars       = z_vars_use,
     use_offset   = use_offset,
+    humidity_var = if (include_humidity) humidity_var else NULL,
     include_year = TRUE,
+    include_humidity = include_humidity,
     doy_k        = doy_k
   )
   
@@ -236,7 +245,9 @@ for (i in seq_len(nrow(hvi_endpoint_metadata))) {
     heat_var     = "heat_dose",
     z_vars       = z_vars_use,
     use_offset   = use_offset,
+    humidity_var = if (include_humidity) humidity_var else NULL,
     include_year = FALSE,
+    include_humidity = include_humidity,
     doy_k        = doy_k
   )
   

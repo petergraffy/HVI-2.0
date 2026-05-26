@@ -54,9 +54,17 @@ endpoint_models <- get(models_obj, envir = .GlobalEnv)
 endpoint_weights <- get(weights_obj, envir = .GlobalEnv)
 
 all_z_vars <- names(hvi_model_matrix)[str_detect(names(hvi_model_matrix), "^z_")]
+base_summary_vars <- intersect(c(all_z_vars, "humidity"), names(hvi_model_matrix))
 community_year_base <- hvi_model_matrix %>%
-  select(community, year, any_of(all_z_vars), pop_offset) %>%
-  distinct() %>%
+  group_by(community, year) %>%
+  summarise(
+    across(any_of(base_summary_vars), ~ mean(.x, na.rm = TRUE)),
+    pop_offset = {
+      vals <- pop_offset[is.finite(pop_offset)]
+      if (length(vals) > 0) vals[1] else NA_real_
+    },
+    .groups = "drop"
+  ) %>%
   mutate(doy = template_doy, dow = factor(template_dow, levels = c("Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat")))
 
 # -----------------------------
@@ -73,13 +81,14 @@ for (ep_key in names(endpoint_models)) {
   all_model_vars <- all.vars(formula(fit))
   z_vars_use <- all_model_vars[str_detect(all_model_vars, "^z_")]
   z_vars_use <- setdiff(z_vars_use, c("outcome", "heat_dose", "pop_offset", "doy", "year"))
+  model_adjustment_vars <- intersect(setdiff(all_model_vars, c("outcome", "heat_dose", "pop_offset", "doy", "dow", "year", z_vars_use)), names(community_year_base))
 
   mrt_val <- meta_row$mrt[1]
   max_lag_val <- meta_row$max_lag[1]
   if (is.na(max_lag_val)) max_lag_val <- 0
 
   base_ep <- community_year_base %>%
-    select(community, year, any_of(z_vars_use), pop_offset, doy, dow)
+    select(community, year, any_of(z_vars_use), any_of(model_adjustment_vars), pop_offset, doy, dow)
 
   grid_ep <- tidyr::expand_grid(
     base_ep,

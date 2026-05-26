@@ -1,6 +1,6 @@
 # ================================================================================================
 # HVI 2.0 | Scenario slider exports
-# Backend artifact for public dashboard controls such as temperature and NDVI sliders.
+# Backend artifact for public dashboard controls such as temperature, NDVI, and AC sliders.
 #
 # This script precomputes a public-safe scenario grid. It intentionally uses base R plus mgcv
 # so the export can run in lightweight automation environments.
@@ -8,9 +8,16 @@
 # Temperature changes are scored through endpoint-specific MRT/lag heat-dose terms.
 # NDVI changes are association-based perturbations of z_ndvi and should not be interpreted
 # as a causal intervention without a separate causal design.
+# Humidity is held at each community baseline value by default. Its observational model
+# term is useful as an adjustment variable, but should not be interpreted as a causal
+# intervention slider without a separate causal or calibrated heat-index model.
 # ================================================================================================
 
 source(file.path(if (dir.exists("code")) "code" else ".", "00_config.R"))
+
+if (!requireNamespace("mgcv", quietly = TRUE)) {
+  stop("The mgcv package is required to score saved GAM/BAM scenario models.")
+}
 
 rescale_0_100_local <- function(x) {
   rng <- range(x, na.rm = TRUE)
@@ -63,9 +70,23 @@ template_dow <- Sys.getenv("HVI_SCENARIO_DOW", unset = "Wed")
 
 temperature_grid_f <- seq(75, 105, by = 1)
 ndvi_delta_grid <- c(-0.10, -0.05, 0, 0.05, 0.10, 0.15, 0.20)
-humidity_grid <- as.numeric(strsplit(Sys.getenv("HVI_SCENARIO_HUMIDITY_GRID", unset = "50"), ",")[[1]])
+enable_humidity_scenarios <- tolower(Sys.getenv("HVI_ENABLE_HUMIDITY_SCENARIOS", unset = "false")) %in% c("true", "1", "yes")
+enable_ac_scenarios <- tolower(Sys.getenv("HVI_ENABLE_AC_SCENARIOS", unset = "true")) %in% c("true", "1", "yes")
+ac_delta_grid <- if (enable_ac_scenarios) {
+  as.numeric(strsplit(
+    Sys.getenv("HVI_SCENARIO_AC_DELTA_GRID", unset = "-0.75,-0.50,-0.25,0"),
+    ","
+  )[[1]])
+} else {
+  0
+}
+humidity_grid <- if (enable_humidity_scenarios) {
+  as.numeric(strsplit(Sys.getenv("HVI_SCENARIO_HUMIDITY_GRID", unset = "30,50,70,90"), ",")[[1]])
+} else {
+  NA_real_
+}
 
-scenario_label <- "temperature_ndvi_slider_grid"
+scenario_label <- "temperature_ndvi_ac_slider_grid"
 
 # ------------------------------------------------------------------------------------------------
 # Load artifacts
@@ -103,14 +124,23 @@ names(endpoint_weights) <- clean_names_base(names(endpoint_weights))
 model_terms <- unique(unlist(lapply(endpoint_models, function(fit) all.vars(stats::formula(fit)))))
 humidity_active <- "humidity" %in% model_terms
 ndvi_active <- any(vapply(endpoint_models, function(fit) "z_ndvi" %in% all.vars(stats::formula(fit)), logical(1)))
+ac_active <- any(vapply(endpoint_models, function(fit) "z_ac_prob" %in% all.vars(stats::formula(fit)), logical(1)))
 
 if (!"ndvi" %in% names(hvi_model_matrix) || !"z_ndvi" %in% names(hvi_model_matrix)) {
   stop("Scenario builder requires ndvi and z_ndvi in hvi_model_matrix.")
+}
+if (!"ac_prob" %in% names(hvi_model_matrix) || !"z_ac_prob" %in% names(hvi_model_matrix)) {
+  warning("Scenario builder did not find ac_prob and z_ac_prob; AC slider will be inactive.")
+  ac_delta_grid <- 0
 }
 
 raw_ndvi_sd <- stats::sd(hvi_model_matrix$ndvi, na.rm = TRUE)
 if (!is.finite(raw_ndvi_sd) || raw_ndvi_sd <= 0) {
   stop("Cannot build NDVI slider grid because raw ndvi has zero or missing variance.")
+}
+raw_ac_sd <- if ("ac_prob" %in% names(hvi_model_matrix)) stats::sd(hvi_model_matrix$ac_prob, na.rm = TRUE) else NA_real_
+if (ac_active && (!is.finite(raw_ac_sd) || raw_ac_sd <= 0)) {
+  stop("Cannot build AC slider grid because raw ac_prob has zero or missing variance.")
 }
 
 hvi_model_matrix$year_int <- suppressWarnings(as.integer(as.character(hvi_model_matrix$year)))
@@ -121,7 +151,7 @@ if (nrow(base_year) == 0) {
 }
 
 z_vars <- grep("^z_", names(base_year), value = TRUE)
-summary_vars <- unique(c("pop_offset", "ndvi", "z_ndvi", "humidity", z_vars))
+summary_vars <- unique(c("pop_offset", "ndvi", "z_ndvi", "ac_prob", "z_ac_prob", "humidity", z_vars))
 summary_vars <- summary_vars[summary_vars %in% names(base_year)]
 
 community_keys <- unique(base_year[, c("community", "year_int"), drop = FALSE])
@@ -162,7 +192,7 @@ for (ep_key in names(endpoint_models)) {
   }
   display_count_cap <- if (is.finite(observed_max_count)) max(observed_max_count * 2, 1) else Inf
 
-  base_cols <- unique(c("community", "year", z_vars_use, "pop_offset", "ndvi", "z_ndvi", "humidity", "doy", "dow"))
+  base_cols <- unique(c("community", "year", z_vars_use, "pop_offset", "ndvi", "z_ndvi", "ac_prob", "z_ac_prob", "humidity", "doy", "dow"))
   base_cols <- base_cols[base_cols %in% names(community_year_base)]
   base_ep <- community_year_base[, base_cols, drop = FALSE]
 
@@ -170,6 +200,7 @@ for (ep_key in names(endpoint_models)) {
     row_id = seq_len(nrow(base_ep)),
     temperature_f = temperature_grid_f,
     ndvi_delta = ndvi_delta_grid,
+    ac_delta = ac_delta_grid,
     humidity_scenario = humidity_grid,
     KEEP.OUT.ATTRS = FALSE,
     stringsAsFactors = FALSE
@@ -200,7 +231,27 @@ for (ep_key in names(endpoint_models)) {
   grid_ep$ndvi_baseline <- grid_ep$ndvi
   grid_ep$ndvi_scenario <- pmin(pmax(grid_ep$ndvi + grid_ep$ndvi_delta, -1), 1)
   grid_ep$z_ndvi <- grid_ep$z_ndvi + (grid_ep$ndvi_delta / raw_ndvi_sd)
-  if (humidity_active) grid_ep$humidity <- grid_ep$humidity_scenario
+  if ("ac_prob" %in% names(grid_ep)) {
+    grid_ep$ac_baseline <- grid_ep$ac_prob
+    grid_ep$ac_scenario <- if (enable_ac_scenarios) {
+      pmin(pmax(grid_ep$ac_prob + grid_ep$ac_delta, 0), 1)
+    } else {
+      grid_ep$ac_prob
+    }
+    if (enable_ac_scenarios && "z_ac_prob" %in% names(grid_ep) && is.finite(raw_ac_sd) && raw_ac_sd > 0) {
+      grid_ep$z_ac_prob <- grid_ep$z_ac_prob + ((grid_ep$ac_scenario - grid_ep$ac_baseline) / raw_ac_sd)
+    }
+  } else {
+    grid_ep$ac_baseline <- NA_real_
+    grid_ep$ac_scenario <- NA_real_
+  }
+  if (humidity_active) {
+    if (enable_humidity_scenarios) {
+      grid_ep$humidity <- grid_ep$humidity_scenario
+    } else {
+      grid_ep$humidity_scenario <- grid_ep$humidity
+    }
+  }
 
   if (!is.null(fit$xlevels) && "dow" %in% names(fit$xlevels)) {
     grid_ep$dow <- factor(as.character(grid_ep$dow), levels = fit$xlevels[["dow"]])
@@ -218,8 +269,22 @@ for (ep_key in names(endpoint_models)) {
   ref_ep <- ref_ep[keep, , drop = FALSE]
   if (nrow(grid_ep) == 0 || nrow(ref_ep) == 0) next
 
-  raw_predicted_count <- as.numeric(predict(fit, newdata = grid_ep, type = "response"))
-  ref_ep$reference_count <- as.numeric(predict(fit, newdata = ref_ep, type = "response"))
+  pred_result <- tryCatch(
+    {
+      list(
+        predicted_count = as.numeric(mgcv::predict.gam(fit, newdata = grid_ep, type = "response")),
+        reference_count = as.numeric(mgcv::predict.gam(fit, newdata = ref_ep, type = "response"))
+      )
+    },
+    error = function(e) {
+      warning("Skipping scenario prediction for ", ep_key, ": ", conditionMessage(e))
+      NULL
+    }
+  )
+  if (is.null(pred_result)) next
+
+  raw_predicted_count <- pred_result$predicted_count
+  ref_ep$reference_count <- pred_result$reference_count
   grid_ep$prediction_capped_for_display <- is.finite(display_count_cap) & raw_predicted_count > display_count_cap
   grid_ep$predicted_count <- pmin(raw_predicted_count, display_count_cap)
   grid_ep$reference_count <- pmin(ref_ep$reference_count, display_count_cap)
@@ -229,8 +294,10 @@ for (ep_key in names(endpoint_models)) {
   grid_ep$display_count_cap <- display_count_cap
 
   keep_cols <- c(
-    "community", "year", "scenario", "temperature_f", "temperature_c", "humidity_scenario", "ndvi_delta",
-    "ndvi_baseline", "ndvi_scenario", "endpoint_key", "outcome_label", "source", "domain",
+    "community", "year", "scenario", "temperature_f", "temperature_c", "humidity_scenario",
+    "ndvi_delta", "ndvi_baseline", "ndvi_scenario",
+    "ac_delta", "ac_baseline", "ac_scenario",
+    "endpoint_key", "outcome_label", "source", "domain",
     "heat_dose_uncapped", "heat_dose", "heat_dose_capped", "max_supported_heat_dose",
     "prediction_capped_for_display", "observed_max_count", "display_count_cap",
     "predicted_count", "reference_count", "excess_events", "relative_risk"
@@ -250,7 +317,7 @@ weight_cols <- weight_cols[weight_cols %in% names(endpoint_weights)]
 scenario_endpoint <- merge(scenario_endpoint, endpoint_weights[, weight_cols, drop = FALSE], by = "endpoint_key", all.x = TRUE)
 scenario_endpoint$endpoint_weight <- coalesce_num(scenario_endpoint$endpoint_weight, 1)
 
-group_cols <- c("community", "year", "scenario", "temperature_f", "humidity_scenario", "ndvi_delta")
+group_cols <- c("community", "year", "scenario", "temperature_f", "humidity_scenario", "ndvi_delta", "ac_delta")
 group_key <- do.call(paste, c(scenario_endpoint[group_cols], sep = "\r"))
 overall_split <- split(seq_len(nrow(scenario_endpoint)), group_key)
 
@@ -264,6 +331,9 @@ scenario_overall <- do.call(rbind, lapply(overall_split, function(idx) {
     temperature_f = dat$temperature_f[1],
     humidity_scenario = dat$humidity_scenario[1],
     ndvi_delta = dat$ndvi_delta[1],
+    ac_delta = dat$ac_delta[1],
+    ac_baseline = dat$ac_baseline[1],
+    ac_scenario = dat$ac_scenario[1],
     total_predicted_count = sum(dat$predicted_count, na.rm = TRUE),
     total_reference_count = sum(dat$reference_count, na.rm = TRUE),
     total_excess_events = sum(dat$excess_events, na.rm = TRUE),
@@ -283,6 +353,7 @@ dominant <- do.call(rbind, lapply(overall_split, function(idx) {
     temperature_f = dat$temperature_f[hit],
     humidity_scenario = dat$humidity_scenario[hit],
     ndvi_delta = dat$ndvi_delta[hit],
+    ac_delta = dat$ac_delta[hit],
     dominant_endpoint = dat$endpoint_key[hit],
     dominant_endpoint_label = dat$outcome_label[hit],
     dominant_endpoint_source = dat$source[hit],
@@ -294,24 +365,29 @@ dominant <- do.call(rbind, lapply(overall_split, function(idx) {
 scenario_overall <- merge(scenario_overall, dominant, by = group_cols, all.x = TRUE)
 
 scenario_variable_metadata <- data.frame(
-  variable = c("temperature_f", "humidity_scenario", "ndvi_delta"),
-  label = c("Temperature", "Relative humidity", "NDVI change"),
-  min = c(min(temperature_grid_f), min(humidity_grid), min(ndvi_delta_grid)),
-  max = c(max(temperature_grid_f), max(humidity_grid), max(ndvi_delta_grid)),
-  step = c(1, NA, 0.05),
-  units = c("deg F", "percent", "index delta"),
-  mode = c("absolute", "absolute", "delta"),
-  active_in_current_model = c(TRUE, humidity_active, ndvi_active),
+  variable = c("temperature_f", "humidity_scenario", "ndvi_delta", "ac_delta"),
+  label = c("Temperature", "Relative humidity", "NDVI change", "AC prevalence change"),
+  min = c(min(temperature_grid_f), if (enable_humidity_scenarios) min(humidity_grid) else NA_real_, min(ndvi_delta_grid), min(ac_delta_grid)),
+  max = c(max(temperature_grid_f), if (enable_humidity_scenarios) max(humidity_grid) else NA_real_, max(ndvi_delta_grid), max(ac_delta_grid)),
+  step = c(1, if (enable_humidity_scenarios) 20 else NA_real_, 0.05, NA),
+  units = c("deg F", "percent", "index delta", "prevalence delta"),
+  mode = c("absolute", "absolute", "delta", "delta"),
+  active_in_current_model = c(TRUE, humidity_active && enable_humidity_scenarios, ndvi_active, ac_active && enable_ac_scenarios),
   interpretation = c(
     "Heat exposure scenario displayed in Fahrenheit and converted to Celsius for MRT-based model scoring.",
-    "Only changes predictions when endpoint models include humidity terms.",
-    "Association-based perturbation of neighborhood greenness; not a causal intervention estimate."
+    "Held at each community area's baseline value by default; observational humidity terms are used only for adjustment.",
+    "Association-based perturbation of neighborhood greenness; not a causal intervention estimate.",
+    "Association-based AC loss-of-cooling scenario; negative values approximate outage-like reductions in effective cooling access."
   ),
   stringsAsFactors = FALSE
 )
 
-scenario_baseline_values <- community_year_base[, c("community", "year", "ndvi", "humidity", "pop_offset"), drop = FALSE]
-names(scenario_baseline_values) <- c("community", "year", "ndvi_baseline", "humidity_baseline", "pop_offset")
+scenario_baseline_cols <- c("community", "year", "ndvi", "ac_prob", "humidity", "pop_offset")
+scenario_baseline_cols <- scenario_baseline_cols[scenario_baseline_cols %in% names(community_year_base)]
+scenario_baseline_values <- community_year_base[, scenario_baseline_cols, drop = FALSE]
+names(scenario_baseline_values) <- sub("^ndvi$", "ndvi_baseline", names(scenario_baseline_values))
+names(scenario_baseline_values) <- sub("^ac_prob$", "ac_baseline", names(scenario_baseline_values))
+names(scenario_baseline_values) <- sub("^humidity$", "humidity_baseline", names(scenario_baseline_values))
 
 # ------------------------------------------------------------------------------------------------
 # Export private model outputs and public dashboard copies

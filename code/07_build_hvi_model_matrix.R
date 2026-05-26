@@ -220,12 +220,22 @@ daily_panel <- daily_panel %>%
     year      = year(date),
     month     = month(date),
     doy       = yday(date),
-    dow       = factor(wday(date),
-                       levels = levels(wday(
-                         seq.Date(as.Date("2023-01-01"), by = "day", length.out = 7)
-                       )))
+    dow       = factor(
+      c("Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat")[wday(date)],
+      levels = c("Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat")
+    )
   ) %>%
   filter(year >= analysis_year_start, year <= analysis_year_end)
+
+if (!is.na(humidity_var) && humidity_var %in% names(daily_panel)) {
+  daily_panel <- daily_panel %>%
+    mutate(humidity = suppressWarnings(as.numeric(.data[[humidity_var]])))
+} else {
+  warning("No humidity column found in daily panel; endpoint models will run without humidity adjustment.")
+  daily_panel <- daily_panel %>%
+    mutate(humidity = NA_real_)
+}
+humidity_var <- "humidity"
 
 baseline <- baseline %>%
   mutate(
@@ -391,7 +401,7 @@ heat_cols_present <- names(model_dat)[
 
 keep_cols <- unique(c(
   "community", "date", "year", "month", "doy", "dow",
-  temp_var, humidity_var,
+  temp_var, "humidity",
   outcome_cols_present,
   "pop_offset",
   vuln_vars,

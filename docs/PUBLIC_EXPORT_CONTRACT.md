@@ -36,7 +36,7 @@ Expected core files:
 
 The slider backend is exported under `public_exports/dashboard/scenarios/`.
 
-- `scenario_grid_endpoint.csv`: endpoint-specific predictions for combinations of temperature and NDVI change.
+- `scenario_grid_endpoint.csv`: endpoint-specific predictions for combinations of temperature, NDVI change, and AC loss-of-cooling scenarios, with humidity held at community baseline values unless explicitly enabled for research QA.
 - `scenario_grid_overall.csv`: overall HVI scenario scores and dominant endpoints.
 - `scenario_variable_metadata.csv`: slider ranges, units, and whether each variable is active in the current fitted models.
 - `scenario_baseline_values.csv`: baseline community-area values used to anchor delta sliders.
@@ -44,10 +44,11 @@ The slider backend is exported under `public_exports/dashboard/scenarios/`.
 Current controls:
 
 - `temperature_f`: active; scored through endpoint-specific MRT and lag windows.
+- `humidity_scenario`: inactive by default; humidity is retained as a model adjustment term but held at each community area's baseline value in public scenarios.
 - `ndvi_delta`: active when endpoint models include `z_ndvi`; interpreted as an association-based scenario, not a causal effect.
-- `humidity_scenario`: included in metadata; only changes predictions after models are fit with humidity terms.
+- `ac_delta`: active when endpoint models include `z_ac_prob`; interpreted as an association-based loss-of-cooling scenario. Defaults include baseline and negative values only to simulate reduced effective AC access, including outage-like conditions.
 
-Temperature is displayed in Fahrenheit but converted to Celsius for model scoring because the fitted MRT/heat-dose artifacts are Celsius-based. Endpoint rows include `heat_dose_capped` and `prediction_capped_for_display`; the app should use the 0-100 score fields for visual comparison and show a model-boundary note when either cap flag is true.
+Temperature is displayed in Fahrenheit but converted to Celsius for model scoring because the fitted MRT/heat-dose artifacts are Celsius-based. Humidity is not exposed as a public intervention slider because the fitted observational association is an adjustment term, not a causal response function. AC scenarios are applied as reductions from each community area's baseline `ac_baseline` and clamped to the 0-1 prevalence range before scoring. Endpoint rows include `heat_dose_capped` and `prediction_capped_for_display`; the app should use the 0-100 score fields for visual comparison and show a model-boundary note when either cap flag is true.
 
 Build scenario exports with:
 

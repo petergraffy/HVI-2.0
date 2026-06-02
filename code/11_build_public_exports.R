@@ -31,8 +31,15 @@ hvi_dir_create(manuscript_dst)
 copy_public_csv <- function(src, dst) {
   dat <- utils::read.csv(src, check.names = FALSE)
 
+  small_excess_mask <- NULL
+  if ("excess_events_heat" %in% names(dat) && is.numeric(dat$excess_events_heat)) {
+    small_excess_mask <- !is.na(dat$excess_events_heat) &
+      dat$excess_events_heat > 0 &
+      dat$excess_events_heat < HVI_SMALL_CELL_THRESHOLD
+  }
+
   count_like <- grep(
-    "(^observed_count$|^expected_events$|count$|events$|excess_events$|baseline_events$)",
+    "(^observed_count$|^expected_events$|count$|events$|^excess_events_heat$|excess_events$|baseline_events$)",
     names(dat),
     ignore.case = TRUE,
     value = TRUE
@@ -40,6 +47,13 @@ copy_public_csv <- function(src, dst) {
   count_like <- setdiff(count_like, c("relative_risk", "attributable_fraction"))
   for (col in count_like) {
     if (is.numeric(dat[[col]])) dat[[col]] <- hvi_public_count(dat[[col]])
+  }
+
+  if (!is.null(small_excess_mask)) {
+    derivative_cols <- intersect(c("excess_rate_per_100k", "estimated_cost_usd"), names(dat))
+    for (col in derivative_cols) {
+      if (is.numeric(dat[[col]])) dat[[col]][small_excess_mask] <- NA_real_
+    }
   }
 
   hvi_write_public_csv(dat, dst)

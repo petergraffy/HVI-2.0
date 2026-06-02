@@ -122,7 +122,8 @@ candidate_vuln_vars <- c(
   "pop_density_km2", "mean_age", "median_age", "mean_black", "mean_hisp", "mean_white",
   "mean_asian", "mean_income", "median_income", "mean_unemployed", "mean_employed",
   "mean_college", "mean_hs", "mean_male", "mean_female",
-  "ndvi", "mean_ndvi", "ac_prob", "ac_cbsa_rank", "no2", "pm25",
+  "ndvi", "mean_ndvi", "tree_canopy_pct", "tree_canopy_fraction", "mean_tree_canopy",
+  "ac_prob", "ac_cbsa_rank", "no2", "pm25",
   "svi_rpl_theme1", "svi_rpl_theme2", "svi_rpl_theme3", "svi_rpl_theme4", "svi_rpl_themes",
   "svi_ep_pov", "svi_ep_unemp", "svi_ep_nohsdp", "svi_ep_age65", "svi_ep_age17",
   "svi_ep_disabl", "svi_ep_sngpnt", "svi_ep_limeng", "svi_ep_minrty",
@@ -147,7 +148,8 @@ clean_community <- function(x) {
     str_to_upper() %>%
     str_replace_all("&", "AND") %>%
     str_replace_all("[[:punct:]]", " ") %>%
-    str_squish()
+    str_squish() %>%
+    str_replace("^O HARE$", "OHARE")
 }
 
 safe_date <- function(x) {

@@ -8,7 +8,7 @@ library(targets)
 tar_option_set(
   packages = c(
     "data.table", "dplyr", "readr", "tidyr", "lubridate", "stringr", "janitor",
-    "sf", "mgcv", "slider", "jsonlite"
+    "sf", "terra", "mgcv", "slider", "jsonlite"
   ),
   error = "stop"
 )
@@ -39,8 +39,17 @@ list(
   ),
 
   tar_target(
+    tree_canopy_coverage,
+    tar_script_step("code/02b_tree_canopy_coverage.R")(),
+    cue = tar_cue(mode = "thorough")
+  ),
+
+  tar_target(
     baseline_vulnerability,
-    tar_script_step("code/06_baseline_vulnerability.R")(),
+    {
+      tree_canopy_coverage
+      tar_script_step("code/06_baseline_vulnerability.R")()
+    },
     cue = tar_cue(mode = "thorough")
   ),
 

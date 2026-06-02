@@ -6,9 +6,10 @@ The repository now has a first `targets` scaffold in `_targets.R`. It is intenti
 
 1. `standardized_panel`: creates private standardized records and aggregate community-day panel.
 2. `climate_panel`: standardizes Daymet and joins climate to the community-day panel.
-3. `baseline_vulnerability`: builds community-area-year structural vulnerability covariates.
-4. `public_exports`: creates public dashboard/manuscript-safe outputs.
-5. `scenario_exports`: creates precomputed dashboard slider outputs for temperature and NDVI scenarios.
+3. `tree_canopy_coverage`: downloads or reads annual USDA/MRLC tree canopy cover rasters and aggregates them to community-area-year coverage.
+4. `baseline_vulnerability`: builds community-area-year structural vulnerability covariates, including tree canopy coverage when available.
+5. `public_exports`: creates public dashboard/manuscript-safe outputs.
+6. `scenario_exports`: creates precomputed dashboard slider outputs for temperature and NDVI scenarios, with tree canopy baseline values carried for frontend context.
 
 Canonical production scripts live directly under `code/`. Prototype, exploratory, or superseded scripts are kept in `code/archive/` and should not be called by `_targets.R` or dashboard export automation.
 

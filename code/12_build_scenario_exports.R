@@ -151,7 +151,11 @@ if (nrow(base_year) == 0) {
 }
 
 z_vars <- grep("^z_", names(base_year), value = TRUE)
-summary_vars <- unique(c("pop_offset", "ndvi", "z_ndvi", "ac_prob", "z_ac_prob", "humidity", z_vars))
+summary_vars <- unique(c(
+  "pop_offset", "ndvi", "z_ndvi",
+  "tree_canopy_pct", "tree_canopy_fraction", "z_tree_canopy_pct", "z_tree_canopy_fraction",
+  "ac_prob", "z_ac_prob", "humidity", z_vars
+))
 summary_vars <- summary_vars[summary_vars %in% names(base_year)]
 
 community_keys <- unique(base_year[, c("community", "year_int"), drop = FALSE])
@@ -382,10 +386,15 @@ scenario_variable_metadata <- data.frame(
   stringsAsFactors = FALSE
 )
 
-scenario_baseline_cols <- c("community", "year", "ndvi", "ac_prob", "humidity", "pop_offset")
+scenario_baseline_cols <- c(
+  "community", "year", "ndvi", "tree_canopy_pct", "tree_canopy_fraction",
+  "ac_prob", "humidity", "pop_offset"
+)
 scenario_baseline_cols <- scenario_baseline_cols[scenario_baseline_cols %in% names(community_year_base)]
 scenario_baseline_values <- community_year_base[, scenario_baseline_cols, drop = FALSE]
 names(scenario_baseline_values) <- sub("^ndvi$", "ndvi_baseline", names(scenario_baseline_values))
+names(scenario_baseline_values) <- sub("^tree_canopy_pct$", "tree_canopy_pct_baseline", names(scenario_baseline_values))
+names(scenario_baseline_values) <- sub("^tree_canopy_fraction$", "tree_canopy_fraction_baseline", names(scenario_baseline_values))
 names(scenario_baseline_values) <- sub("^ac_prob$", "ac_baseline", names(scenario_baseline_values))
 names(scenario_baseline_values) <- sub("^humidity$", "humidity_baseline", names(scenario_baseline_values))
 

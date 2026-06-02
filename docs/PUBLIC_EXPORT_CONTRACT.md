@@ -25,12 +25,38 @@ Expected core files:
 
 - `frontend_structural_summary.csv`
 - `frontend_structural_endpoint_long.csv`
+- `frontend_baseline_risk_factors.csv`
+- `frontend_tree_canopy_year_ca.csv`
 - `frontend_temperature_query_endpoint_long.csv`
 - `frontend_temperature_query_overall.csv`
 - `frontend_temperature_query_wide.csv`
 - `frontend_daily_map.csv`
 - `frontend_daily_endpoint_long.csv`
 - `frontend_daily_wide.csv`
+- `frontend_historical_daily_summary.csv`
+- `frontend_historical_daily_endpoint_ranked.csv`
+- `frontend_excess_allcause_daily.csv`
+- `frontend_excess_allcause_annual.csv`
+- `frontend_excess_allcause_citywide.csv`
+- `frontend_excess_cost_assumptions.csv`
+
+## Historical Risk Files
+
+The historical dashboard view should use the frontend exports for 2019-2022 warm-season community-area days.
+
+- `frontend_daily_map.csv`: community-area-day map table. It includes `temperature_c`, `temperature_f`, `humidity`, `tree_canopy_pct`, and `tree_canopy_fraction` where available, daily 0-100 risk score fields, dominant endpoint labels, and baseline vulnerability context. Count-like model fields are suppressed by the public export builder when they are below the small-cell threshold.
+- `frontend_historical_daily_summary.csv`: public-safe community-area-day summary for tooltips, map cards, and time-series views. It includes temperature, tree canopy coverage, daily risk tier, dominant health endpoint, baseline risk score, and top baseline driver labels. It intentionally omits observed, predicted, reference, and excess count values.
+- `frontend_historical_daily_endpoint_ranked.csv`: public-safe endpoint ranking by community-area-day. It includes endpoint labels, source family, rank, endpoint 0-100 risk score, qualitative impact tier, relative risk, and proportional contribution (`impact_share_pct`). It intentionally omits observed, predicted, reference, and excess count values.
+- `frontend_baseline_risk_factors.csv`: community-area-year baseline risk explanation table. It reports tree canopy coverage, the baseline vulnerability score/tier, dominant baseline endpoint, and top modeled structural or environmental contributors using human-readable labels.
+- `frontend_tree_canopy_year_ca.csv`: standalone community-area-year tree canopy coverage export with `tree_canopy_pct` and `tree_canopy_fraction` for map layers, filters, and frontend QA.
+- `frontend_excess_allcause_daily.csv`: modeled heat-attributable excess for all-cause ED visits (`ed_visits`), EMS calls (`ems_calls`), and deaths (`deaths`) by community-area-day. It includes temperature, tree canopy coverage, population when available, modeled positive excess events, excess rate per 100,000 residents, unit cost, and estimated cost. Public export suppression applies to count-like fields.
+- `frontend_excess_allcause_annual.csv`: community-area-year rollup of the all-cause excess file.
+- `frontend_excess_allcause_citywide.csv`: citywide year-level and all-year rollup of all-cause excess events, rates, and estimated costs.
+- `frontend_excess_cost_assumptions.csv`: unit-cost assumptions used to estimate health/medical/economic burden. Defaults can be overridden with `HVI_UNIT_COST_ED_VISIT_USD`, `HVI_UNIT_COST_EMS_CALL_USD`, `HVI_UNIT_COST_DEATH_USD`, `HVI_UNIT_COST_YEAR`, or a CSV path in `HVI_EXCESS_COST_ASSUMPTIONS`.
+
+These files support statements such as: the temperature observed in a specific community area on a given historical day; which modeled health endpoint contributed most to that day's heat-health risk; and which baseline community characteristics contribute to that area's structural vulnerability. They should not be used to display raw health event counts.
+
+Excess events are model-derived differences between heat-day predictions and reference no-heat predictions. Negative excess is clamped to zero for the cost files so estimated cost represents positive heat-attributable burden only. Mortality cost defaults are valuation assumptions, not direct medical bills; public displays should label them accordingly.
 
 ## Scenario Slider Files
 
@@ -39,7 +65,7 @@ The slider backend is exported under `public_exports/dashboard/scenarios/`.
 - `scenario_grid_endpoint.csv`: endpoint-specific predictions for combinations of temperature, NDVI change, and AC loss-of-cooling scenarios, with humidity held at community baseline values unless explicitly enabled for research QA.
 - `scenario_grid_overall.csv`: overall HVI scenario scores and dominant endpoints.
 - `scenario_variable_metadata.csv`: slider ranges, units, and whether each variable is active in the current fitted models.
-- `scenario_baseline_values.csv`: baseline community-area values used to anchor delta sliders.
+- `scenario_baseline_values.csv`: baseline community-area values used to anchor delta sliders, including tree canopy coverage when available.
 
 Current controls:
 

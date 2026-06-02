@@ -25,6 +25,14 @@ rescale_0_100_local <- function(x) {
   100 * (x - rng[1]) / diff(rng)
 }
 
+rescale_positive_0_100_local <- function(x) {
+  out <- pmax(as.numeric(x), 0)
+  max_val <- suppressWarnings(max(out, na.rm = TRUE))
+  if (!is.finite(max_val)) return(rep(NA_real_, length(x)))
+  if (max_val <= 0) return(rep(0, length(x)))
+  100 * out / max_val
+}
+
 read_csv_base <- function(path) {
   utils::read.csv(path, check.names = FALSE, stringsAsFactors = FALSE)
 }
@@ -39,6 +47,47 @@ clean_names_base <- function(x) {
 coalesce_num <- function(x, fallback) {
   x[is.na(x)] <- fallback
   x
+}
+
+write_chunked_csv <- function(dat, out_dir, prefix, max_bytes = 100 * 1000 * 1000) {
+  hvi_dir_create(out_dir)
+  old_files <- list.files(
+    out_dir,
+    pattern = paste0("^", prefix, "_part_[0-9]{3}\\.csv$|^manifest\\.csv$"),
+    full.names = TRUE
+  )
+  if (length(old_files) > 0) file.remove(old_files)
+
+  tmp_full <- tempfile(fileext = ".csv")
+  utils::write.csv(dat, tmp_full, row.names = FALSE, na = "")
+  full_size <- file.info(tmp_full)$size
+  unlink(tmp_full)
+
+  if (!is.finite(full_size) || full_size <= 0 || nrow(dat) == 0) {
+    manifest <- data.frame(file = character(), rows = integer(), bytes = integer())
+    utils::write.csv(manifest, file.path(out_dir, "manifest.csv"), row.names = FALSE, na = "")
+    return(invisible(manifest))
+  }
+
+  rows_per_chunk <- max(1L, as.integer(floor(as.double(nrow(dat)) * as.double(max_bytes) / as.double(full_size))))
+  starts <- seq(1L, nrow(dat), by = rows_per_chunk)
+  manifest_rows <- vector("list", length(starts))
+  for (i in seq_along(starts)) {
+    idx <- starts[i]:min(starts[i] + rows_per_chunk - 1L, nrow(dat))
+    fname <- sprintf("%s_part_%03d.csv", prefix, i)
+    fpath <- file.path(out_dir, fname)
+    utils::write.csv(dat[idx, , drop = FALSE], fpath, row.names = FALSE, na = "")
+    manifest_rows[[i]] <- data.frame(
+      file = fname,
+      rows = length(idx),
+      bytes = as.integer(file.info(fpath)$size),
+      stringsAsFactors = FALSE
+    )
+  }
+
+  manifest <- do.call(rbind, manifest_rows)
+  utils::write.csv(manifest, file.path(out_dir, "manifest.csv"), row.names = FALSE, na = "")
+  invisible(manifest)
 }
 
 # ------------------------------------------------------------------------------------------------
@@ -85,6 +134,9 @@ humidity_grid <- if (enable_humidity_scenarios) {
 } else {
   NA_real_
 }
+scenario_chunk_max_bytes <- as.integer(
+  as.numeric(Sys.getenv("HVI_SCENARIO_CHUNK_MAX_MB", unset = "100")) * 1000 * 1000
+)
 
 scenario_label <- "temperature_ndvi_ac_slider_grid"
 
@@ -310,11 +362,12 @@ for (ep_key in names(endpoint_models)) {
 }
 
 scenario_endpoint <- do.call(rbind, endpoint_scenario_list)
-scenario_endpoint$endpoint_risk_0_100 <- unlist(tapply(
+scenario_endpoint$endpoint_positive_excess <- pmax(scenario_endpoint$excess_events, 0)
+scenario_endpoint$endpoint_risk_0_100 <- ave(
   scenario_endpoint$excess_events,
   scenario_endpoint$endpoint_key,
-  rescale_0_100_local
-), use.names = FALSE)
+  FUN = rescale_positive_0_100_local
+)
 
 weight_cols <- c("endpoint_key", "endpoint_weight", "source_weight", "performance_weight")
 weight_cols <- weight_cols[weight_cols %in% names(endpoint_weights)]
@@ -345,7 +398,8 @@ scenario_overall <- do.call(rbind, lapply(overall_split, function(idx) {
     stringsAsFactors = FALSE
   )
 }))
-scenario_overall$overall_risk_0_100 <- rescale_0_100_local(scenario_overall$overall_weighted_excess)
+scenario_overall$overall_positive_weighted_excess <- pmax(scenario_overall$overall_weighted_excess, 0)
+scenario_overall$overall_risk_0_100 <- rescale_positive_0_100_local(scenario_overall$overall_weighted_excess)
 
 dominant <- do.call(rbind, lapply(overall_split, function(idx) {
   dat <- scenario_endpoint[idx, , drop = FALSE]
@@ -405,6 +459,12 @@ utils::write.csv(scenario_endpoint, file.path(scenario_out_dir, "scenario_grid_e
 utils::write.csv(scenario_overall, file.path(scenario_out_dir, "scenario_grid_overall.csv"), row.names = FALSE, na = "")
 utils::write.csv(scenario_variable_metadata, file.path(scenario_out_dir, "scenario_variable_metadata.csv"), row.names = FALSE, na = "")
 utils::write.csv(scenario_baseline_values, file.path(scenario_out_dir, "scenario_baseline_values.csv"), row.names = FALSE, na = "")
+write_chunked_csv(
+  scenario_endpoint,
+  file.path(scenario_out_dir, "scenario_grid_endpoint_chunks"),
+  "scenario_grid_endpoint",
+  max_bytes = scenario_chunk_max_bytes
+)
 
 public_scenario_dir <- file.path(HVI_PATHS$public$dashboard, "scenarios")
 hvi_dir_create(public_scenario_dir)
@@ -412,6 +472,12 @@ hvi_write_public_csv(scenario_endpoint, file.path(public_scenario_dir, "scenario
 hvi_write_public_csv(scenario_overall, file.path(public_scenario_dir, "scenario_grid_overall.csv"))
 hvi_write_public_csv(scenario_variable_metadata, file.path(public_scenario_dir, "scenario_variable_metadata.csv"))
 hvi_write_public_csv(scenario_baseline_values, file.path(public_scenario_dir, "scenario_baseline_values.csv"))
+write_chunked_csv(
+  scenario_endpoint,
+  file.path(public_scenario_dir, "scenario_grid_endpoint_chunks"),
+  "scenario_grid_endpoint",
+  max_bytes = scenario_chunk_max_bytes
+)
 
 assign("scenario_endpoint", scenario_endpoint, envir = .GlobalEnv)
 assign("scenario_overall", scenario_overall, envir = .GlobalEnv)

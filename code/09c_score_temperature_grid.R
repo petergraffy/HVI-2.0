@@ -123,7 +123,10 @@ for (ep_key in names(endpoint_models)) {
 
 temp_grid_endpoint_risk <- bind_rows(endpoint_grid_list) %>%
   group_by(endpoint_key) %>%
-  mutate(endpoint_risk_0_100 = rescale_0_100(excess_events)) %>%
+  mutate(
+    endpoint_positive_excess = pmax(excess_events, 0),
+    endpoint_risk_0_100 = rescale_positive_0_100(excess_events)
+  ) %>%
   ungroup() %>%
   left_join(endpoint_weights %>% select(endpoint_key, endpoint_weight, source_weight, performance_weight), by = "endpoint_key")
 
@@ -137,7 +140,10 @@ family_grid <- temp_grid_endpoint_risk %>%
     .groups = "drop"
   ) %>%
   group_by(source) %>%
-  mutate(family_risk_0_100 = rescale_0_100(family_excess_events)) %>%
+  mutate(
+    family_positive_excess = pmax(family_excess_events, 0),
+    family_risk_0_100 = rescale_positive_0_100(family_excess_events)
+  ) %>%
   ungroup()
 
 # overall operational total
@@ -151,7 +157,10 @@ overall_grid <- temp_grid_endpoint_risk %>%
     overall_weighted_excess = weighted.mean(excess_events, w = endpoint_weight, na.rm = TRUE),
     .groups = "drop"
   ) %>%
-  mutate(overall_risk_0_100 = rescale_0_100(overall_weighted_excess))
+  mutate(
+    overall_positive_weighted_excess = pmax(overall_weighted_excess, 0),
+    overall_risk_0_100 = rescale_positive_0_100(overall_weighted_excess)
+  )
 
 # dominant endpoint at each community-year-temperature
 endpoint_dominant <- temp_grid_endpoint_risk %>%

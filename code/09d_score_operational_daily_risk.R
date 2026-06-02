@@ -193,7 +193,10 @@ if (nrow(ca_day_endpoint_risk) == 0) {
 
 ca_day_endpoint_risk <- ca_day_endpoint_risk %>%
   group_by(endpoint_key) %>%
-  mutate(endpoint_risk_0_100 = rescale_0_100(excess_events)) %>%
+  mutate(
+    endpoint_positive_excess = pmax(excess_events, 0),
+    endpoint_risk_0_100 = rescale_positive_0_100(excess_events)
+  ) %>%
   ungroup() %>%
   left_join(endpoint_weights %>% select(endpoint_key, endpoint_weight, source_weight, performance_weight), by = "endpoint_key")
 
@@ -207,7 +210,10 @@ ca_day_family_risk <- ca_day_endpoint_risk %>%
     .groups = "drop"
   ) %>%
   group_by(source) %>%
-  mutate(family_risk_0_100 = rescale_0_100(family_excess_events)) %>%
+  mutate(
+    family_positive_excess = pmax(family_excess_events, 0),
+    family_risk_0_100 = rescale_positive_0_100(family_excess_events)
+  ) %>%
   ungroup()
 
 # dominant endpoint per day-community
@@ -237,7 +243,8 @@ ca_day_overall_operational_hvi <- ca_day_endpoint_risk %>%
     .groups = "drop"
   ) %>%
   mutate(
-    overall_risk_0_100 = rescale_0_100(overall_weighted_excess),
+    overall_positive_weighted_excess = pmax(overall_weighted_excess, 0),
+    overall_risk_0_100 = rescale_positive_0_100(overall_weighted_excess),
     alert_tier = cut(overall_risk_0_100, breaks = alert_breaks, labels = alert_labels, include.lowest = TRUE, right = TRUE)
   ) %>%
   left_join(ca_day_dominant_endpoint, by = c("community", "date", "year"))

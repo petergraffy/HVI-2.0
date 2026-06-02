@@ -21,6 +21,14 @@ rescale_0_100 <- function(x) {
   100 * (x - rng[1]) / diff(rng)
 }
 
+rescale_positive_0_100 <- function(x) {
+  out <- pmax(as.numeric(x), 0)
+  max_val <- suppressWarnings(max(out, na.rm = TRUE))
+  if (!is.finite(max_val)) return(rep(NA_real_, length(x)))
+  if (max_val <= 0) return(rep(0, length(x)))
+  100 * out / max_val
+}
+
 safe_cor <- function(x, y, method = "spearman") {
   ok <- is.finite(x) & is.finite(y)
   if (sum(ok) < 3) return(NA_real_)

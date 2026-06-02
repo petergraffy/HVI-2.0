@@ -276,17 +276,7 @@ frontend_temp_query_overall <- temp_grid_overall_risk %>%
 
 frontend_daily_map <- ca_day_overall_operational_hvi %>%
   left_join(historical_temperature, by = c("community", "date", "year")) %>%
-  left_join(
-    frontend_baseline_risk_factors %>%
-      select(
-        community, year,
-        tree_canopy_pct, tree_canopy_fraction,
-        baseline_risk_score_0_100, baseline_risk_tier,
-        baseline_dominant_endpoint, baseline_dominant_endpoint_label,
-        baseline_driver_1_label, baseline_driver_2_label, baseline_driver_3_label
-      ),
-    by = c("community", "year")
-  ) %>%
+  left_join(historical_canopy, by = c("community", "year")) %>%
   select(
     community, date, year,
     temperature_c, temperature_f, humidity,
@@ -294,10 +284,7 @@ frontend_daily_map <- ca_day_overall_operational_hvi %>%
     overall_risk_0_100, alert_tier,
     total_predicted_count, total_reference_count, total_excess_events,
     dominant_endpoint, dominant_endpoint_label, dominant_endpoint_source,
-    dominant_endpoint_risk_0_100,
-    baseline_risk_score_0_100, baseline_risk_tier,
-    baseline_dominant_endpoint, baseline_dominant_endpoint_label,
-    baseline_driver_1_label, baseline_driver_2_label, baseline_driver_3_label
+    dominant_endpoint_risk_0_100
   )
 
 frontend_daily_endpoint_long <- ca_day_endpoint_risk %>%
@@ -308,8 +295,7 @@ frontend_daily_endpoint_long <- ca_day_endpoint_risk %>%
 
 all_cause_endpoint_keys <- c("ed_visits", "ems_calls", "deaths")
 
-frontend_excess_allcause_daily <- ca_day_endpoint_risk %>%
-  filter(endpoint_key %in% all_cause_endpoint_keys) %>%
+frontend_excess_endpoint_daily <- ca_day_endpoint_risk %>%
   mutate(excess_events_heat = pmax(excess_events, 0)) %>%
   left_join(
     historical_temperature %>%
@@ -322,12 +308,28 @@ frontend_excess_allcause_daily <- ca_day_endpoint_risk %>%
   ) %>%
   left_join(excess_cost_assumptions, by = "endpoint_key") %>%
   mutate(
-    event_family = coalesce(event_family, source),
+    event_family = source,
     excess_rate_per_100k = if_else(
       !is.na(population) & population > 0,
       100000 * excess_events_heat / population,
       NA_real_
-    ),
+    )
+  ) %>%
+  select(
+    community, date, year,
+    endpoint_key, event_family, outcome_label, domain,
+    temperature_c, temperature_f,
+    tree_canopy_pct, tree_canopy_fraction,
+    population,
+    excess_events_heat, excess_rate_per_100k,
+    endpoint_risk_0_100, relative_risk
+  )
+
+frontend_excess_allcause_daily <- frontend_excess_endpoint_daily %>%
+  filter(endpoint_key %in% all_cause_endpoint_keys) %>%
+  left_join(excess_cost_assumptions, by = "endpoint_key") %>%
+  mutate(
+    event_family = coalesce(event_family.y, event_family.x),
     estimated_cost_usd = excess_events_heat * unit_cost_usd
   ) %>%
   select(
@@ -339,6 +341,24 @@ frontend_excess_allcause_daily <- ca_day_endpoint_risk %>%
     excess_events_heat, excess_rate_per_100k,
     unit_cost_usd, estimated_cost_usd,
     cost_year, cost_basis
+  )
+
+frontend_excess_endpoint_annual <- frontend_excess_endpoint_daily %>%
+  group_by(community, year, endpoint_key, event_family, outcome_label, domain) %>%
+  summarise(
+    warm_season_days = n_distinct(date),
+    mean_temperature_f = mean(temperature_f, na.rm = TRUE),
+    max_temperature_f = max(temperature_f, na.rm = TRUE),
+    population = mean(population, na.rm = TRUE),
+    tree_canopy_pct = mean(tree_canopy_pct, na.rm = TRUE),
+    tree_canopy_fraction = mean(tree_canopy_fraction, na.rm = TRUE),
+    excess_events_heat = sum(excess_events_heat, na.rm = TRUE),
+    excess_rate_per_100k = if_else(
+      !is.na(population) & population > 0,
+      100000 * excess_events_heat / population,
+      NA_real_
+    ),
+    .groups = "drop"
   )
 
 frontend_excess_allcause_annual <- frontend_excess_allcause_daily %>%
@@ -372,6 +392,45 @@ reference_city_population <- city_population_by_year %>%
   filter(year == max(year, na.rm = TRUE)) %>%
   pull(population)
 if (length(reference_city_population) == 0) reference_city_population <- NA_real_
+
+frontend_excess_endpoint_citywide <- frontend_excess_endpoint_daily %>%
+  group_by(year, endpoint_key, event_family, outcome_label, domain) %>%
+  summarise(
+    community_areas = n_distinct(community),
+    warm_season_days = n_distinct(date),
+    mean_temperature_f = mean(temperature_f, na.rm = TRUE),
+    max_temperature_f = max(temperature_f, na.rm = TRUE),
+    excess_events_heat = sum(excess_events_heat, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  left_join(city_population_by_year, by = "year") %>%
+  mutate(
+    excess_rate_per_100k = if_else(
+      !is.na(population) & population > 0,
+      100000 * excess_events_heat / population,
+      NA_real_
+    )
+  ) %>%
+  bind_rows(
+    frontend_excess_endpoint_daily %>%
+      group_by(endpoint_key, event_family, outcome_label, domain) %>%
+      summarise(
+        year = NA_integer_,
+        community_areas = n_distinct(community),
+        warm_season_days = n_distinct(date),
+        mean_temperature_f = mean(temperature_f, na.rm = TRUE),
+        max_temperature_f = max(temperature_f, na.rm = TRUE),
+        population = reference_city_population,
+        excess_events_heat = sum(excess_events_heat, na.rm = TRUE),
+        excess_rate_per_100k = if_else(
+          !is.na(population) & population > 0,
+          100000 * excess_events_heat / population,
+          NA_real_
+        ),
+        .groups = "drop"
+      )
+  ) %>%
+  arrange(event_family, endpoint_key, year)
 
 frontend_excess_allcause_citywide <- frontend_excess_allcause_daily %>%
   group_by(year, endpoint_key, event_family, outcome_label) %>%
@@ -430,14 +489,7 @@ frontend_historical_daily_summary <- frontend_daily_map %>%
     daily_dominant_endpoint = dominant_endpoint,
     daily_dominant_endpoint_label = dominant_endpoint_label,
     daily_dominant_endpoint_source = dominant_endpoint_source,
-    daily_dominant_endpoint_risk_0_100 = dominant_endpoint_risk_0_100,
-    baseline_risk_score_0_100,
-    baseline_risk_tier,
-    baseline_dominant_endpoint,
-    baseline_dominant_endpoint_label,
-    baseline_driver_1_label,
-    baseline_driver_2_label,
-    baseline_driver_3_label
+    daily_dominant_endpoint_risk_0_100 = dominant_endpoint_risk_0_100
   )
 
 frontend_historical_daily_endpoint_ranked <- ca_day_endpoint_risk %>%
@@ -490,6 +542,9 @@ write_csv(frontend_daily_endpoint_long, file.path(frontend_dir, "frontend_daily_
 write_csv(frontend_daily_wide, file.path(frontend_dir, "frontend_daily_wide.csv"))
 write_csv(frontend_historical_daily_summary, file.path(frontend_dir, "frontend_historical_daily_summary.csv"))
 write_csv(frontend_historical_daily_endpoint_ranked, file.path(frontend_dir, "frontend_historical_daily_endpoint_ranked.csv"))
+write_csv(frontend_excess_endpoint_daily, file.path(frontend_dir, "frontend_excess_endpoint_daily.csv"))
+write_csv(frontend_excess_endpoint_annual, file.path(frontend_dir, "frontend_excess_endpoint_annual.csv"))
+write_csv(frontend_excess_endpoint_citywide, file.path(frontend_dir, "frontend_excess_endpoint_citywide.csv"))
 write_csv(frontend_excess_allcause_daily, file.path(frontend_dir, "frontend_excess_allcause_daily.csv"))
 write_csv(frontend_excess_allcause_annual, file.path(frontend_dir, "frontend_excess_allcause_annual.csv"))
 write_csv(frontend_excess_allcause_citywide, file.path(frontend_dir, "frontend_excess_allcause_citywide.csv"))
@@ -504,6 +559,9 @@ assign("frontend_daily_map", frontend_daily_map, envir = .GlobalEnv)
 assign("frontend_daily_endpoint_long", frontend_daily_endpoint_long, envir = .GlobalEnv)
 assign("frontend_historical_daily_summary", frontend_historical_daily_summary, envir = .GlobalEnv)
 assign("frontend_historical_daily_endpoint_ranked", frontend_historical_daily_endpoint_ranked, envir = .GlobalEnv)
+assign("frontend_excess_endpoint_daily", frontend_excess_endpoint_daily, envir = .GlobalEnv)
+assign("frontend_excess_endpoint_annual", frontend_excess_endpoint_annual, envir = .GlobalEnv)
+assign("frontend_excess_endpoint_citywide", frontend_excess_endpoint_citywide, envir = .GlobalEnv)
 assign("frontend_excess_allcause_daily", frontend_excess_allcause_daily, envir = .GlobalEnv)
 assign("frontend_excess_allcause_annual", frontend_excess_allcause_annual, envir = .GlobalEnv)
 assign("frontend_excess_allcause_citywide", frontend_excess_allcause_citywide, envir = .GlobalEnv)

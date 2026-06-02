@@ -83,7 +83,7 @@ Record-level standardized files are private working artifacts only. Aggregate pa
 
 ### 2. Minimum-Risk Temperature and Heat Dose
 
-Endpoint-specific temperature-response relationships are estimated to identify minimum-risk temperatures (MRTs) and relevant lag windows. Heat dose is then defined as cumulative excess temperature above the endpoint-specific MRT over the endpoint's lag window.
+Endpoint-specific temperature-response relationships are estimated to identify minimum-risk temperatures (MRTs) and relevant lag windows. Heat dose is then defined as cumulative excess temperature above the endpoint-specific MRT over the endpoint's lag window. For operational all-cause ED excess calculations, the pipeline uses a 32 C default MRT override so the historical warm-season period has meaningful coverage; the original DLNM-estimated MRT is retained in endpoint metadata for audit.
 
 This design allows different health endpoints to have different heat thresholds and lag structures. For example, EMS and ED endpoints may respond over shorter windows, while mortality endpoints may require longer distributed lag structures.
 
@@ -115,7 +115,7 @@ The structural score answers:
 
 ### 6. Temperature and Operational Risk Scoring
 
-The pipeline also scores risk across temperature scenarios and observed daily heat conditions. For each community area, endpoint, and temperature scenario, fitted models estimate predicted counts, reference counts, excess events, relative risk, endpoint risk, family risk, and overall risk.
+The pipeline also scores risk across temperature scenarios and observed daily heat conditions. For each community area, endpoint, and temperature scenario, fitted models estimate predicted counts, reference counts, signed excess events, positive heat-attributable excess, relative risk, endpoint risk, family risk, and overall risk. Public 0-100 risk scores are scaled from positive excess so negative model differences do not inflate baseline map scores.
 
 The operational score answers:
 
@@ -161,10 +161,10 @@ The dashboard should not read from `data/`, `results/`, `code/results/`, `code/0
 Public export details are documented in [docs/PUBLIC_EXPORT_CONTRACT.md](docs/PUBLIC_EXPORT_CONTRACT.md).
 
 Historical dashboard exports now include community-area-day temperature and tree canopy coverage for the 2019-2022 warm seasons,
-public-safe baseline risk explanations, and ranked health-impact summaries that describe which modeled
+context-only baseline risk explanations, and ranked health-impact summaries that describe which modeled
 endpoint contributes most on a given day without exposing observed health event counts.
 They also include all-cause ED, EMS, and mortality excess-burden summaries with rates and configurable
-unit-cost assumptions for estimated health/economic burden.
+unit-cost assumptions for estimated health/economic burden, plus condition-specific excess-event summaries for disease and syndrome drilldowns.
 
 ## Data Governance
 

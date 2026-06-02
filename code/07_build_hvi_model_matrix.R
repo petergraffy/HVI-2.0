@@ -132,6 +132,8 @@ candidate_vuln_vars <- c(
 )
 
 center_scale_within_overlap <- TRUE
+median_impute_vulnerability_covariates <- TRUE
+ed_visits_mrt_override_c <- suppressWarnings(as.numeric(hvi_env("HVI_ED_VISITS_MRT_C", "32")))
 
 # -----------------------------
 # Helper functions
@@ -162,6 +164,38 @@ zscore <- function(x) {
   m <- mean(x, na.rm = TRUE)
   if (is.na(s) || s == 0) return(rep(0, length(x)))
   as.numeric((x - m) / s)
+}
+
+median_impute_numeric_vars <- function(dat, vars, group_var = "year") {
+  vars <- vars[vars %in% names(dat)]
+  for (v in vars) {
+    x <- suppressWarnings(as.numeric(dat[[v]]))
+    missing <- is.na(x)
+    if (!any(missing)) {
+      dat[[v]] <- x
+      next
+    }
+    
+    global_med <- suppressWarnings(median(x, na.rm = TRUE))
+    if (!is.finite(global_med)) {
+      dat[[v]] <- x
+      next
+    }
+    
+    fill <- rep(global_med, length(x))
+    if (group_var %in% names(dat)) {
+      group_med <- ave(x, dat[[group_var]], FUN = function(g) {
+        med <- suppressWarnings(median(g, na.rm = TRUE))
+        if (is.finite(med)) med else global_med
+      })
+      fill <- as.numeric(group_med)
+      fill[!is.finite(fill)] <- global_med
+    }
+    
+    x[missing] <- fill[missing]
+    dat[[v]] <- x
+  }
+  dat
 }
 
 make_lagged_heat_dose <- function(x, max_lag) {
@@ -265,6 +299,13 @@ baseline_model <- baseline %>%
   select(community, year, any_of(c(vuln_vars, baseline_pop_col))) %>%
   distinct()
 
+if (isTRUE(median_impute_vulnerability_covariates)) {
+  baseline_covariate_missing_n <- rowSums(is.na(baseline_model[vuln_vars]))
+  baseline_model$baseline_covariate_median_imputed_n <- baseline_covariate_missing_n
+  baseline_model$baseline_covariate_median_imputed_any <- baseline_covariate_missing_n > 0
+  baseline_model <- median_impute_numeric_vars(baseline_model, vuln_vars, group_var = "year")
+}
+
 if (center_scale_within_overlap) {
   baseline_model <- baseline_model %>%
     mutate(across(all_of(vuln_vars), zscore, .names = "z_{.col}"))
@@ -344,6 +385,21 @@ endpoint_meta <- mrt_table_expanded %>%
   filter(!is.na(panel_outcome_col)) %>%
   distinct(endpoint_key, .keep_all = TRUE)
 
+endpoint_meta <- endpoint_meta %>%
+  mutate(
+    mrt_original = mrt,
+    mrt_override_reason = if_else(
+      endpoint_key == "ed_visits" & is.finite(ed_visits_mrt_override_c) & mrt != ed_visits_mrt_override_c,
+      paste0("All-cause ED MRT lowered to ", ed_visits_mrt_override_c, " C for historical coverage; original DLNM MRT retained in mrt_original."),
+      NA_character_
+    ),
+    mrt = if_else(
+      endpoint_key == "ed_visits" & is.finite(ed_visits_mrt_override_c),
+      ed_visits_mrt_override_c,
+      mrt
+    )
+  )
+
 if (nrow(endpoint_meta) == 0) {
   stop("No endpoints matched between mrt_table_expanded and the daily panel.")
 }
@@ -408,6 +464,8 @@ keep_cols <- unique(c(
   "pop_offset",
   vuln_vars,
   z_vuln_vars,
+  "baseline_covariate_median_imputed_n",
+  "baseline_covariate_median_imputed_any",
   "baseline_vuln_mean_z",
   heat_cols_present
 ))

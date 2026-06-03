@@ -115,6 +115,9 @@ for (ep_key in names(endpoint_models)) {
     mutate(
       reference_count = ref_ep$reference_count,
       excess_events = predicted_count - reference_count,
+      excess_events_signed = excess_events,
+      negative_heat_artifact = excess_events < 0 & heat_dose > 0,
+      excess_events_heat = if_else(negative_heat_artifact, abs(excess_events), pmax(excess_events, 0)),
       relative_risk = ifelse(reference_count > 0, predicted_count / reference_count, NA_real_)
     )
 
@@ -124,8 +127,8 @@ for (ep_key in names(endpoint_models)) {
 temp_grid_endpoint_risk <- bind_rows(endpoint_grid_list) %>%
   group_by(endpoint_key) %>%
   mutate(
-    endpoint_positive_excess = pmax(excess_events, 0),
-    endpoint_risk_0_100 = rescale_positive_0_100(excess_events)
+    endpoint_positive_excess = excess_events_heat,
+    endpoint_risk_0_100 = rescale_positive_0_100(excess_events_heat)
   ) %>%
   ungroup() %>%
   left_join(endpoint_weights %>% select(endpoint_key, endpoint_weight, source_weight, performance_weight), by = "endpoint_key")
@@ -136,12 +139,14 @@ family_grid <- temp_grid_endpoint_risk %>%
   summarise(
     family_predicted_count = sum(predicted_count, na.rm = TRUE),
     family_reference_count = sum(reference_count, na.rm = TRUE),
-    family_excess_events = sum(excess_events, na.rm = TRUE),
+    family_signed_excess_events = sum(excess_events_signed, na.rm = TRUE),
+    family_excess_events = sum(excess_events_heat, na.rm = TRUE),
+    negative_heat_artifact_endpoints = sum(negative_heat_artifact %in% TRUE, na.rm = TRUE),
     .groups = "drop"
   ) %>%
   group_by(source) %>%
   mutate(
-    family_positive_excess = pmax(family_excess_events, 0),
+    family_positive_excess = family_excess_events,
     family_risk_0_100 = rescale_positive_0_100(family_excess_events)
   ) %>%
   ungroup()
@@ -153,24 +158,29 @@ overall_grid <- temp_grid_endpoint_risk %>%
   summarise(
     total_predicted_count = sum(predicted_count, na.rm = TRUE),
     total_reference_count = sum(reference_count, na.rm = TRUE),
-    total_excess_events = sum(excess_events, na.rm = TRUE),
-    overall_weighted_excess = weighted.mean(excess_events, w = endpoint_weight, na.rm = TRUE),
+    total_signed_excess_events = sum(excess_events_signed, na.rm = TRUE),
+    total_positive_excess_events = sum(excess_events_heat, na.rm = TRUE),
+    total_excess_events = total_positive_excess_events,
+    overall_weighted_signed_excess = weighted.mean(excess_events_signed, w = endpoint_weight, na.rm = TRUE),
+    overall_weighted_excess = weighted.mean(excess_events_heat, w = endpoint_weight, na.rm = TRUE),
+    negative_heat_artifact_endpoints = sum(negative_heat_artifact %in% TRUE, na.rm = TRUE),
     .groups = "drop"
   ) %>%
   mutate(
-    overall_positive_weighted_excess = pmax(overall_weighted_excess, 0),
+    overall_positive_weighted_excess = overall_weighted_excess,
     overall_risk_0_100 = rescale_positive_0_100(overall_weighted_excess)
   )
 
 # dominant endpoint at each community-year-temperature
 endpoint_dominant <- temp_grid_endpoint_risk %>%
   group_by(community, year, temp_value, scenario) %>%
-  slice_max(order_by = excess_events, n = 1, with_ties = FALSE) %>%
+  slice_max(order_by = excess_events_heat, n = 1, with_ties = FALSE) %>%
   ungroup() %>%
   transmute(
     community, year, temp_value, scenario,
     dominant_endpoint = endpoint_key,
-    dominant_endpoint_excess = excess_events,
+    dominant_endpoint_excess = excess_events_heat,
+    dominant_endpoint_signed_excess = excess_events_signed,
     dominant_endpoint_risk_0_100 = endpoint_risk_0_100
   )
 

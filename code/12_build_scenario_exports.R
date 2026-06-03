@@ -345,6 +345,13 @@ for (ep_key in names(endpoint_models)) {
   grid_ep$predicted_count <- pmin(raw_predicted_count, display_count_cap)
   grid_ep$reference_count <- pmin(ref_ep$reference_count, display_count_cap)
   grid_ep$excess_events <- grid_ep$predicted_count - grid_ep$reference_count
+  grid_ep$excess_events_signed <- grid_ep$excess_events
+  grid_ep$negative_heat_artifact <- grid_ep$excess_events < 0 & grid_ep$heat_dose > 0
+  grid_ep$excess_events_heat <- ifelse(
+    grid_ep$negative_heat_artifact,
+    abs(grid_ep$excess_events),
+    pmax(grid_ep$excess_events, 0)
+  )
   grid_ep$relative_risk <- ifelse(grid_ep$reference_count > 0, grid_ep$predicted_count / grid_ep$reference_count, NA_real_)
   grid_ep$observed_max_count <- observed_max_count
   grid_ep$display_count_cap <- display_count_cap
@@ -356,15 +363,17 @@ for (ep_key in names(endpoint_models)) {
     "endpoint_key", "outcome_label", "source", "domain",
     "heat_dose_uncapped", "heat_dose", "heat_dose_capped", "max_supported_heat_dose",
     "prediction_capped_for_display", "observed_max_count", "display_count_cap",
-    "predicted_count", "reference_count", "excess_events", "relative_risk"
+    "predicted_count", "reference_count",
+    "excess_events", "excess_events_heat", "excess_events_signed", "negative_heat_artifact",
+    "relative_risk"
   )
   endpoint_scenario_list[[ep_key]] <- grid_ep[, keep_cols, drop = FALSE]
 }
 
 scenario_endpoint <- do.call(rbind, endpoint_scenario_list)
-scenario_endpoint$endpoint_positive_excess <- pmax(scenario_endpoint$excess_events, 0)
+scenario_endpoint$endpoint_positive_excess <- scenario_endpoint$excess_events_heat
 scenario_endpoint$endpoint_risk_0_100 <- ave(
-  scenario_endpoint$excess_events,
+  scenario_endpoint$excess_events_heat,
   scenario_endpoint$endpoint_key,
   FUN = rescale_positive_0_100_local
 )
@@ -393,17 +402,21 @@ scenario_overall <- do.call(rbind, lapply(overall_split, function(idx) {
     ac_scenario = dat$ac_scenario[1],
     total_predicted_count = sum(dat$predicted_count, na.rm = TRUE),
     total_reference_count = sum(dat$reference_count, na.rm = TRUE),
-    total_excess_events = sum(dat$excess_events, na.rm = TRUE),
-    overall_weighted_excess = stats::weighted.mean(dat$excess_events, w = w, na.rm = TRUE),
+    total_signed_excess_events = sum(dat$excess_events_signed, na.rm = TRUE),
+    total_positive_excess_events = sum(dat$excess_events_heat, na.rm = TRUE),
+    total_excess_events = sum(dat$excess_events_heat, na.rm = TRUE),
+    overall_weighted_signed_excess = stats::weighted.mean(dat$excess_events_signed, w = w, na.rm = TRUE),
+    overall_weighted_excess = stats::weighted.mean(dat$excess_events_heat, w = w, na.rm = TRUE),
+    negative_heat_artifact_endpoints = sum(dat$negative_heat_artifact %in% TRUE, na.rm = TRUE),
     stringsAsFactors = FALSE
   )
 }))
-scenario_overall$overall_positive_weighted_excess <- pmax(scenario_overall$overall_weighted_excess, 0)
+scenario_overall$overall_positive_weighted_excess <- scenario_overall$overall_weighted_excess
 scenario_overall$overall_risk_0_100 <- rescale_positive_0_100_local(scenario_overall$overall_weighted_excess)
 
 dominant <- do.call(rbind, lapply(overall_split, function(idx) {
   dat <- scenario_endpoint[idx, , drop = FALSE]
-  hit <- which.max(dat$excess_events)
+  hit <- which.max(dat$excess_events_heat)
   data.frame(
     community = dat$community[hit],
     year = dat$year[hit],
@@ -415,7 +428,8 @@ dominant <- do.call(rbind, lapply(overall_split, function(idx) {
     dominant_endpoint = dat$endpoint_key[hit],
     dominant_endpoint_label = dat$outcome_label[hit],
     dominant_endpoint_source = dat$source[hit],
-    dominant_endpoint_excess = dat$excess_events[hit],
+    dominant_endpoint_excess = dat$excess_events_heat[hit],
+    dominant_endpoint_signed_excess = dat$excess_events_signed[hit],
     dominant_endpoint_risk_0_100 = dat$endpoint_risk_0_100[hit],
     stringsAsFactors = FALSE
   )

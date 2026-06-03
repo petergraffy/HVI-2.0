@@ -166,7 +166,10 @@ historical_temperature <- hvi_model_matrix %>%
     population = if ("pop_offset" %in% names(hvi_model_matrix)) suppressWarnings(as.numeric(pop_offset)) else NA_real_
   ) %>%
   distinct(community, date, year, .keep_all = TRUE) %>%
-  mutate(temperature_f = c_to_f(temperature_c))
+  mutate(
+    temperature_f = c_to_f(temperature_c),
+    is_warm_season = lubridate::month(date) %in% 5:9
+  )
 
 canopy_pct_col <- c("tree_canopy_pct", "mean_tree_canopy", "tree_canopy")
 canopy_pct_col <- canopy_pct_col[canopy_pct_col %in% names(hvi_model_matrix)][1]
@@ -280,26 +283,36 @@ frontend_daily_map <- ca_day_overall_operational_hvi %>%
   select(
     community, date, year,
     temperature_c, temperature_f, humidity,
+    is_warm_season,
     tree_canopy_pct, tree_canopy_fraction,
     overall_risk_0_100, alert_tier,
-    total_predicted_count, total_reference_count, total_excess_events,
+    total_predicted_count, total_reference_count,
+    total_excess_events, total_positive_excess_events, total_signed_excess_events,
+    overall_weighted_excess, overall_weighted_signed_excess,
+    negative_heat_artifact_endpoints,
     dominant_endpoint, dominant_endpoint_label, dominant_endpoint_source,
+    dominant_endpoint_excess, dominant_endpoint_signed_excess,
     dominant_endpoint_risk_0_100
   )
 
 frontend_daily_endpoint_long <- ca_day_endpoint_risk %>%
   select(
     community, date, year, endpoint_key, outcome_label, source, domain,
-    endpoint_risk_0_100, observed_count, predicted_count, reference_count, excess_events, relative_risk
+    endpoint_risk_0_100, observed_count, predicted_count, reference_count,
+    excess_events, excess_events_heat, excess_events_signed, negative_heat_artifact,
+    relative_risk
   )
 
 all_cause_endpoint_keys <- c("ed_visits", "ems_calls", "deaths")
 
 frontend_excess_endpoint_daily <- ca_day_endpoint_risk %>%
-  mutate(excess_events_heat = pmax(excess_events, 0)) %>%
+  mutate(
+    excess_events_heat = if ("excess_events_heat" %in% names(.)) excess_events_heat else pmax(excess_events, 0),
+    excess_events_signed = if ("excess_events_signed" %in% names(.)) excess_events_signed else excess_events
+  ) %>%
   left_join(
     historical_temperature %>%
-      select(community, date, year, temperature_c, temperature_f, population),
+      select(community, date, year, temperature_c, temperature_f, is_warm_season, population),
     by = c("community", "date", "year")
   ) %>%
   left_join(
@@ -309,6 +322,7 @@ frontend_excess_endpoint_daily <- ca_day_endpoint_risk %>%
   left_join(excess_cost_assumptions, by = "endpoint_key") %>%
   mutate(
     event_family = source,
+    excess_definition = "Positive heat-attributable burden. Negative heat contrasts with heat_dose > 0 are treated as flagged model artifacts and reported by magnitude; signed contrast retained in excess_events_signed.",
     excess_rate_per_100k = if_else(
       !is.na(population) & population > 0,
       100000 * excess_events_heat / population,
@@ -318,10 +332,10 @@ frontend_excess_endpoint_daily <- ca_day_endpoint_risk %>%
   select(
     community, date, year,
     endpoint_key, event_family, outcome_label, domain,
-    temperature_c, temperature_f,
+    temperature_c, temperature_f, is_warm_season,
     tree_canopy_pct, tree_canopy_fraction,
     population,
-    excess_events_heat, excess_rate_per_100k,
+    excess_events_heat, excess_events_signed, excess_definition, excess_rate_per_100k,
     endpoint_risk_0_100, relative_risk
   )
 
@@ -335,10 +349,10 @@ frontend_excess_allcause_daily <- frontend_excess_endpoint_daily %>%
   select(
     community, date, year,
     endpoint_key, event_family, outcome_label,
-    temperature_c, temperature_f,
+    temperature_c, temperature_f, is_warm_season,
     tree_canopy_pct, tree_canopy_fraction,
     population,
-    excess_events_heat, excess_rate_per_100k,
+    excess_events_heat, excess_events_signed, excess_definition, excess_rate_per_100k,
     unit_cost_usd, estimated_cost_usd,
     cost_year, cost_basis
   )
@@ -346,13 +360,15 @@ frontend_excess_allcause_daily <- frontend_excess_endpoint_daily %>%
 frontend_excess_endpoint_annual <- frontend_excess_endpoint_daily %>%
   group_by(community, year, endpoint_key, event_family, outcome_label, domain) %>%
   summarise(
-    warm_season_days = n_distinct(date),
+    total_days = n_distinct(date),
+    warm_season_days = n_distinct(date[is_warm_season %in% TRUE]),
     mean_temperature_f = mean(temperature_f, na.rm = TRUE),
     max_temperature_f = max(temperature_f, na.rm = TRUE),
     population = mean(population, na.rm = TRUE),
     tree_canopy_pct = mean(tree_canopy_pct, na.rm = TRUE),
     tree_canopy_fraction = mean(tree_canopy_fraction, na.rm = TRUE),
     excess_events_heat = sum(excess_events_heat, na.rm = TRUE),
+    excess_events_signed = sum(excess_events_signed, na.rm = TRUE),
     excess_rate_per_100k = if_else(
       !is.na(population) & population > 0,
       100000 * excess_events_heat / population,
@@ -364,13 +380,15 @@ frontend_excess_endpoint_annual <- frontend_excess_endpoint_daily %>%
 frontend_excess_allcause_annual <- frontend_excess_allcause_daily %>%
   group_by(community, year, endpoint_key, event_family, outcome_label) %>%
   summarise(
-    warm_season_days = n_distinct(date),
+    total_days = n_distinct(date),
+    warm_season_days = n_distinct(date[is_warm_season %in% TRUE]),
     mean_temperature_f = mean(temperature_f, na.rm = TRUE),
     max_temperature_f = max(temperature_f, na.rm = TRUE),
     population = mean(population, na.rm = TRUE),
     tree_canopy_pct = mean(tree_canopy_pct, na.rm = TRUE),
     tree_canopy_fraction = mean(tree_canopy_fraction, na.rm = TRUE),
     excess_events_heat = sum(excess_events_heat, na.rm = TRUE),
+    excess_events_signed = sum(excess_events_signed, na.rm = TRUE),
     excess_rate_per_100k = if_else(
       !is.na(population) & population > 0,
       100000 * excess_events_heat / population,
@@ -397,10 +415,12 @@ frontend_excess_endpoint_citywide <- frontend_excess_endpoint_daily %>%
   group_by(year, endpoint_key, event_family, outcome_label, domain) %>%
   summarise(
     community_areas = n_distinct(community),
-    warm_season_days = n_distinct(date),
+    total_days = n_distinct(date),
+    warm_season_days = n_distinct(date[is_warm_season %in% TRUE]),
     mean_temperature_f = mean(temperature_f, na.rm = TRUE),
     max_temperature_f = max(temperature_f, na.rm = TRUE),
     excess_events_heat = sum(excess_events_heat, na.rm = TRUE),
+    excess_events_signed = sum(excess_events_signed, na.rm = TRUE),
     .groups = "drop"
   ) %>%
   left_join(city_population_by_year, by = "year") %>%
@@ -417,11 +437,13 @@ frontend_excess_endpoint_citywide <- frontend_excess_endpoint_daily %>%
       summarise(
         year = NA_integer_,
         community_areas = n_distinct(community),
-        warm_season_days = n_distinct(date),
+        total_days = n_distinct(date),
+        warm_season_days = n_distinct(date[is_warm_season %in% TRUE]),
         mean_temperature_f = mean(temperature_f, na.rm = TRUE),
         max_temperature_f = max(temperature_f, na.rm = TRUE),
         population = reference_city_population,
         excess_events_heat = sum(excess_events_heat, na.rm = TRUE),
+        excess_events_signed = sum(excess_events_signed, na.rm = TRUE),
         excess_rate_per_100k = if_else(
           !is.na(population) & population > 0,
           100000 * excess_events_heat / population,
@@ -436,10 +458,12 @@ frontend_excess_allcause_citywide <- frontend_excess_allcause_daily %>%
   group_by(year, endpoint_key, event_family, outcome_label) %>%
   summarise(
     community_areas = n_distinct(community),
-    warm_season_days = n_distinct(date),
+    total_days = n_distinct(date),
+    warm_season_days = n_distinct(date[is_warm_season %in% TRUE]),
     mean_temperature_f = mean(temperature_f, na.rm = TRUE),
     max_temperature_f = max(temperature_f, na.rm = TRUE),
     excess_events_heat = sum(excess_events_heat, na.rm = TRUE),
+    excess_events_signed = sum(excess_events_signed, na.rm = TRUE),
     unit_cost_usd = first(unit_cost_usd),
     estimated_cost_usd = sum(estimated_cost_usd, na.rm = TRUE),
     cost_year = first(cost_year),
@@ -460,11 +484,13 @@ frontend_excess_allcause_citywide <- frontend_excess_allcause_daily %>%
       summarise(
         year = NA_integer_,
         community_areas = n_distinct(community),
-        warm_season_days = n_distinct(date),
+        total_days = n_distinct(date),
+        warm_season_days = n_distinct(date[is_warm_season %in% TRUE]),
         mean_temperature_f = mean(temperature_f, na.rm = TRUE),
         max_temperature_f = max(temperature_f, na.rm = TRUE),
         population = reference_city_population,
         excess_events_heat = sum(excess_events_heat, na.rm = TRUE),
+        excess_events_signed = sum(excess_events_signed, na.rm = TRUE),
         excess_rate_per_100k = if_else(
           !is.na(population) & population > 0,
           100000 * excess_events_heat / population,
@@ -482,10 +508,12 @@ frontend_excess_allcause_citywide <- frontend_excess_allcause_daily %>%
 frontend_historical_daily_summary <- frontend_daily_map %>%
   transmute(
     community, date, year,
-    temperature_c, temperature_f, humidity,
+    temperature_c, temperature_f, humidity, is_warm_season,
     tree_canopy_pct, tree_canopy_fraction,
     daily_risk_score_0_100 = overall_risk_0_100,
     daily_risk_tier = alert_tier,
+    daily_positive_excess_events = total_excess_events,
+    daily_signed_excess_events = total_signed_excess_events,
     daily_dominant_endpoint = dominant_endpoint,
     daily_dominant_endpoint_label = dominant_endpoint_label,
     daily_dominant_endpoint_source = dominant_endpoint_source,
@@ -495,14 +523,14 @@ frontend_historical_daily_summary <- frontend_daily_map %>%
 frontend_historical_daily_endpoint_ranked <- ca_day_endpoint_risk %>%
   group_by(community, date, year) %>%
   mutate(
-    positive_excess = pmax(excess_events, 0),
+    positive_excess = if ("excess_events_heat" %in% names(.)) excess_events_heat else pmax(excess_events, 0),
     positive_excess_total = sum(positive_excess, na.rm = TRUE),
     impact_share_pct = if_else(
       positive_excess_total > 0,
       100 * positive_excess / positive_excess_total,
       NA_real_
     ),
-    impact_rank = min_rank(desc(excess_events)),
+    impact_rank = min_rank(desc(positive_excess)),
     impact_tier = impact_tier(endpoint_risk_0_100)
   ) %>%
   ungroup() %>%

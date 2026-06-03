@@ -37,7 +37,21 @@ copy_public_csv <- function(src, dst) {
     ignore.case = TRUE,
     value = TRUE
   )
-  count_like <- setdiff(count_like, c("excess_events_heat"))
+  modeled_excess_fields <- c(
+    "excess_events_heat",
+    "excess_events_signed",
+    "total_excess_events",
+    "total_positive_excess_events",
+    "total_signed_excess_events",
+    "overall_weighted_excess",
+    "overall_weighted_signed_excess",
+    "overall_positive_weighted_excess",
+    "dominant_endpoint_excess",
+    "dominant_endpoint_signed_excess",
+    "excess_rate_per_100k",
+    "estimated_cost_usd"
+  )
+  count_like <- setdiff(count_like, modeled_excess_fields)
   count_like <- setdiff(count_like, c("relative_risk", "attributable_fraction"))
   for (col in count_like) {
     if (is.numeric(dat[[col]])) dat[[col]] <- hvi_public_count(dat[[col]])

@@ -54,14 +54,24 @@ list(
   ),
 
   tar_target(
-    public_exports,
-    tar_script_step("code/11_build_public_exports.R")(),
+    scenario_exports,
+    tar_script_step("code/12_build_scenario_exports.R")(),
     cue = tar_cue(mode = "always")
   ),
 
   tar_target(
-    scenario_exports,
-    tar_script_step("code/12_build_scenario_exports.R")(),
+    long_term_forecast_exports,
+    tar_script_step("code/13_build_long_term_forecast_exports.R")(),
+    cue = tar_cue(mode = "always")
+  ),
+
+  tar_target(
+    public_exports,
+    {
+      scenario_exports
+      long_term_forecast_exports
+      tar_script_step("code/11_build_public_exports.R")()
+    },
     cue = tar_cue(mode = "always")
   )
 )

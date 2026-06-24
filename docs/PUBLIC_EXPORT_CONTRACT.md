@@ -70,14 +70,14 @@ Excess events are model-derived differences between heat-day predictions and ref
 
 ## Long-Term Forecast Files
 
-The long-term forecast backend is exported as annual, community-area-level planning artifacts. These are intended for "5, 10, and 20 years out" views driven by annual mean daily maximum temperature trends; they are not daily alert forecasts and are not formal climate-model projections.
+The long-term forecast backend is exported as annual, community-area-level planning artifacts. These are intended for "5, 10, and 20 years out" views driven by annual mean daily maximum temperature trends, plus fixed-warming sensitivity scenarios; they are not daily alert forecasts and are not formal climate-model projections.
 
-- `frontend_forecast_annual_model_matrix.csv`: historical community-area-year-endpoint matrix used to fit annual forecast models. It includes annual mean and maximum temperature, annual heat days/dose, population, observed endpoint counts/rates, tree canopy, NDVI, AC probability, and endpoint metadata.
-- `frontend_long_term_forecast_endpoint.csv`: endpoint-level forecasts by community area and horizon (`5`, `10`, `20` by default), including forecast annual temperature, temperature delta, predicted baseline and forecast counts/rates, predicted change, model status, and baseline/forecast heat-day metrics.
-- `frontend_long_term_forecast_overall.csv`: community-area horizon summary with weighted overall forecast change, 0-100 forecast risk score, tier, and dominant endpoint.
-- `frontend_long_term_forecast_metadata.csv`: generation time, baseline year, horizon set, climate trend source, trend slope, confidence level, and method note.
+- `frontend_forecast_annual_model_matrix.csv`: historical community-area-year-endpoint QA matrix. It includes annual mean and maximum temperature, annual heat days/dose, population, observed endpoint counts/rates, tree canopy, NDVI, AC probability, and endpoint metadata. It is retained for diagnostics and context, not as the primary forecasting model input.
+- `frontend_long_term_forecast_endpoint.csv`: endpoint-level heat-burden forecasts by community area and scenario. Trend scenarios include horizons (`5`, `10`, `20` by default); fixed-warming scenarios include temperature deltas (`+0.5`, `+1`, `+2`, `+3 C` by default). Fields include baseline and shifted-temperature heat-attributable excess, signed QA change, nonnegative added heat burden, rates per 100,000, model status, and baseline/forecast heat-day metrics.
+- `frontend_long_term_forecast_overall.csv`: community-area scenario summary with total and weighted added heat burden, 0-100 forecast risk score, tier, and dominant endpoint.
+- `frontend_long_term_forecast_metadata.csv`: generation time, baseline year, horizon set, fixed-warming deltas, climate trend source, trend slope, and method note.
 
-Forecasts use annual quasipoisson endpoint models of community-year counts against annual mean daily maximum temperature, with community fixed effects and population offsets when estimable. If an endpoint lacks sufficient annual support, the export records a fallback model status. Public displays should label this as a planning scenario layer and avoid presenting it as a deterministic prediction.
+Forecasts shift the selected baseline year of daily temperatures, recompute endpoint-specific heat dose using each endpoint's MRT and lag window, score the saved daily endpoint HVI models, and aggregate annual heat-attributable excess. `additional_heat_burden` is clamped at zero so public displays do not show negative burden. Signed change fields are retained for QA. When response-scale predictions exceed empirical endpoint/community support, they are capped and marked with `model_status = "prediction_capped"`. Public displays should label this as a planning scenario layer and avoid presenting it as a deterministic prediction of total annual health-care utilization.
 
 ## Scenario Slider Files
 

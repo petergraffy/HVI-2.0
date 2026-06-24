@@ -12,7 +12,7 @@ The repository now has a first `targets` scaffold in `_targets.R`. It is intenti
 6. `risk_scoring`: scores structural, temperature-grid, and historical daily risk. Public 0-100 temporal scores are scaled from positive modeled heat-attributable excess; signed excess remains in aggregate outputs for QA.
 7. `public_exports`: creates public dashboard/manuscript-safe outputs, including temporal risk maps, context-only baseline vulnerability tables, all-cause excess cost files, and condition-specific excess drilldown files.
 8. `scenario_exports`: creates precomputed dashboard slider outputs for temperature, NDVI, and AC loss-of-cooling scenarios, with tree canopy baseline values carried for frontend context.
-9. `long_term_forecast_exports`: aggregates annual community-area temperature and outcome histories, fits annual endpoint forecast models, and exports 5-, 10-, and 20-year planning scenarios for the dashboard.
+9. `long_term_forecast_exports`: shifts a baseline year of daily temperatures through the saved endpoint HVI models, aggregates added heat-attributable burden to annual community-area outputs, and exports 5-, 10-, and 20-year trend scenarios plus fixed-warming planning scenarios for the dashboard.
 
 Canonical production scripts live directly under `code/`. Prototype, exploratory, or superseded scripts are kept in `code/archive/` and should not be called by `_targets.R` or dashboard export automation.
 
